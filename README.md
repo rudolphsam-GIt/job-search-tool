@@ -39,6 +39,25 @@ pipeline and runs an automated daily search.
 - **Daily automation** — a `launchd` job runs the search every morning so new
   matches are waiting for you.
 
+## Technical highlights
+
+- **Multi-source aggregation** — fans out to five job sources in parallel
+  (RemoteOK, Jobicy, We Work Remotely, The Muse, and per-company **Greenhouse**
+  boards via the `boards-api`) with `Promise.all`, normalizing each into a
+  single `RemoteJob` shape.
+- **Profile-aware filtering** — applies title include/exclude rules, a salary
+  floor, a company blacklist, and US-eligibility heuristics before anything
+  reaches the model.
+- **LLM ranking with structured output** — batches candidates to Claude
+  (`claude-sonnet-4-6`) and parses a strict JSON contract back into per-job fit
+  scores, rationales, and concerns; a separate single-job analyze route does the
+  same for a pasted posting.
+- **Coaching-profile integration** — a small regex parser reads a Markdown
+  `coaching_state.md` into a typed profile (target roles, seniority, strengths,
+  active interview loops) that drives both ranking context and the UI sidebar.
+- **Hands-off automation** — a `launchd` agent calls the daily-search endpoint
+  each morning so new ranked matches are waiting without opening the app.
+
 ## Stack
 
 Next.js 14 · React 18 · TypeScript · Tailwind CSS · Anthropic Claude API
@@ -69,3 +88,7 @@ launchctl load ~/Library/LaunchAgents/com.jobsearch.daily.plist
 
 Single-user by design — runs locally against your own `.env.local` and a local
 `data/jobs-store.json`. Both are gitignored; nothing personal is committed.
+
+## License
+
+MIT — see [LICENSE](LICENSE).
