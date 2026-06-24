@@ -5,7 +5,11 @@ roles, scores each one against your profile with Claude (fit score, why it fits,
 concerns), and bundles company research and interview prep — then tracks your
 pipeline and runs an automated daily search.
 
-> _Screenshots below use sample data._
+> _Screenshots and demo use sample data._
+
+## Demo
+
+![Job Search Tool demo](screenshots/demo.gif)
 
 ## Screenshots
 
