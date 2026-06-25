@@ -276,13 +276,23 @@ export function jobMatchesQuery(job: RemoteJob, query: string): boolean {
   return terms.some(t => haystack.includes(t))
 }
 
+const RELEVANCE_STOPWORDS = new Set(['of', 'and', 'the', 'a', 'for', 'in', 'on', 'at', 'to'])
+
 /**
  * Scores how relevant a job is to a query — title matches weigh far more than
  * tag/description matches, so a broad OR-match query can still be sorted to put
  * the closest titles first before truncating the pool sent to the LLM ranker.
+ *
+ * Terms are deduplicated before scoring. Without this, a query built from several
+ * synonymous target-role phrases (e.g. "customer success" and "success" both present
+ * as separate keywords) repeats common words multiple times, which inflated matching
+ * titles' scores far beyond titles matching an equally relevant but less-repeated term
+ * (e.g. "partner") — silently crowding partnership roles out of the truncated pool.
  */
 export function jobRelevanceScore(job: RemoteJob, query: string): number {
-  const terms = query.toLowerCase().split(/\s+/).filter(Boolean)
+  const terms = new Set(
+    query.toLowerCase().split(/\s+/).filter(t => t && !RELEVANCE_STOPWORDS.has(t))
+  )
   const titleLower = job.title.toLowerCase()
   const tagsLower = (job.tags || []).join(' ').toLowerCase()
   const descLower = (job.description || '').toLowerCase()
@@ -294,6 +304,25 @@ export function jobRelevanceScore(job: RemoteJob, query: string): number {
     if (descLower.includes(t)) score += 1
   }
   return score
+}
+
+/**
+ * Caps how many listings from the same company can appear in a relevance-sorted
+ * pool, preserving order. A company with many near-duplicate openings (e.g. the
+ * same CSM role posted per-region) would otherwise monopolize the truncated slots
+ * sent to the LLM ranker, crowding out roles from other companies and other titles.
+ */
+export function capPerCompany(jobs: RemoteJob[], maxPerCompany: number): RemoteJob[] {
+  const counts = new Map<string, number>()
+  const result: RemoteJob[] = []
+  for (const job of jobs) {
+    const key = job.company_name.toLowerCase()
+    const count = counts.get(key) || 0
+    if (count >= maxPerCompany) continue
+    counts.set(key, count + 1)
+    result.push(job)
+  }
+  return result
 }
 
 /**

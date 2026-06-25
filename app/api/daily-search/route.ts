@@ -3,7 +3,7 @@ import Anthropic from '@anthropic-ai/sdk'
 import fs from 'fs'
 import path from 'path'
 import { loadCoachingStateRaw } from '@/lib/coaching-state'
-import { fetchAllSources, jobMatchesQuery, jobRelevanceScore, isUSEligible } from '@/lib/job-sources'
+import { fetchAllSources, jobMatchesQuery, jobRelevanceScore, capPerCompany, isUSEligible } from '@/lib/job-sources'
 import type { RemoteJob, SearchPrefs, ProfileOverrides } from '@/lib/types'
 import { DEFAULT_SEARCH_PREFS } from '@/lib/types'
 
@@ -145,12 +145,15 @@ export async function POST(req: NextRequest) {
 
   const keywordQuery = keywords.join(' ')
   // Sort by relevance before truncating so the LLM sees the closest titles first,
-  // not just whatever the source APIs happened to return first.
-  const rankedCandidates = [...candidates].sort(
+  // not just whatever the source APIs happened to return first. Cap per-company
+  // duplicates so one employer's many near-identical listings can't crowd out
+  // other companies and role types (e.g. partnership roles vs. CS roles).
+  const sortedCandidates = [...candidates].sort(
     (a, b) => jobRelevanceScore(b, keywordQuery) - jobRelevanceScore(a, keywordQuery)
   )
+  const rankedCandidates = capPerCompany(sortedCandidates, 3)
 
-  const summaries = rankedCandidates.slice(0, 40).map((j, i) => ({
+  const summaries = rankedCandidates.slice(0, 50).map((j, i) => ({
     index: i,
     title: j.title,
     company: j.company_name,
@@ -183,7 +186,7 @@ export async function POST(req: NextRequest) {
 
   const rankMsg = await client.messages.create({
     model: 'claude-sonnet-4-6',
-    max_tokens: 2048,
+    max_tokens: 3072,
     messages: [{
       role: 'user',
       content: `Rank these remote job listings for this candidate. Return any job scoring 4 or above.
