@@ -354,3 +354,17 @@ export function isUSEligible(location: string): boolean {
   // Ambiguous or unknown — keep (err on the side of showing)
   return true
 }
+
+/**
+ * Returns false for jobs with no remote signal anywhere — i.e. likely office-required.
+ * RemoteOK, Jobicy, We Work Remotely, and The Muse are remote-curated boards by
+ * construction, so this mainly filters Greenhouse listings, which pull a company's
+ * full job board (sales, ops, on-site roles included) with no remote filtering at the
+ * source. Checking the description as a fallback catches postings where the location
+ * field just lists an office city but the body confirms remote eligibility.
+ */
+export function isLikelyRemote(location: string, description?: string): boolean {
+  if (/\b(remote|anywhere|worldwide|distributed)\b/i.test(location || '')) return true
+  if (description && /\bremote\b/i.test(description)) return true
+  return false
+}

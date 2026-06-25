@@ -3,7 +3,7 @@ import Anthropic from '@anthropic-ai/sdk'
 import fs from 'fs'
 import path from 'path'
 import { loadCoachingStateRaw } from '@/lib/coaching-state'
-import { fetchAllSources, jobMatchesQuery, jobRelevanceScore, capPerCompany, isUSEligible } from '@/lib/job-sources'
+import { fetchAllSources, jobMatchesQuery, jobRelevanceScore, capPerCompany, isUSEligible, isLikelyRemote } from '@/lib/job-sources'
 import type { RemoteJob, SearchPrefs, ProfileOverrides } from '@/lib/types'
 import { DEFAULT_SEARCH_PREFS } from '@/lib/types'
 
@@ -39,6 +39,7 @@ function applyPrefilters(jobs: RemoteJob[], prefs: SearchPrefs): RemoteJob[] {
     const titleLower = j.title.toLowerCase()
     const companyLower = j.company_name.toLowerCase()
     if (!isUSEligible(j.candidate_required_location)) return false
+    if (!isLikelyRemote(j.candidate_required_location, j.description)) return false
     if (excludePatterns.some(p => p.test(j.title))) return false
     if (requireTerms.length > 0 && !requireTerms.some(t => titleLower.includes(t))) return false
     if (blacklist.some(b => companyLower.includes(b) || b.includes(companyLower))) return false
@@ -126,7 +127,7 @@ export async function POST(req: NextRequest) {
       content: `Rank these remote job opportunities for this candidate. Only return jobs scoring 4 or above.
 
 ${excludeLine}
-LOCATION: Candidate is US-based. Score 0 and omit any role restricted to non-US geographies (e.g. Europe Only, UK Only, LATAM, APAC). Remote, Worldwide, Anywhere, and US-specific roles are all fine.
+LOCATION: Candidate is US-based. Score 0 and omit any role restricted to non-US geographies (e.g. Europe Only, UK Only, LATAM, APAC). Remote, Worldwide, Anywhere, and US-specific roles are all fine. If a listing says "remote" but ties that to residency in or near a specific city/metro (e.g. "fully remote in Washington, DC"), don't treat it as unrestricted remote — note the residency requirement explicitly in fitReason and reduce fitScore accordingly.
 PRIORITIZE: B2B SaaS companies get +1 to fitScore.
 ${dreamLine}
 ${salaryLine}

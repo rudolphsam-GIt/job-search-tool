@@ -3,7 +3,7 @@ import Anthropic from '@anthropic-ai/sdk'
 import fs from 'fs'
 import path from 'path'
 import { loadCoachingStateRaw } from '@/lib/coaching-state'
-import { fetchAllSources, jobMatchesQuery, jobRelevanceScore, capPerCompany, isUSEligible } from '@/lib/job-sources'
+import { fetchAllSources, jobMatchesQuery, jobRelevanceScore, capPerCompany, isUSEligible, isLikelyRemote } from '@/lib/job-sources'
 import type { RemoteJob, SearchPrefs, ProfileOverrides } from '@/lib/types'
 import { DEFAULT_SEARCH_PREFS } from '@/lib/types'
 
@@ -52,6 +52,10 @@ function applyPrefilters(jobs: RemoteJob[], prefs: SearchPrefs): RemoteJob[] {
 
     // US-only: drop jobs restricted to non-US geographies
     if (!isUSEligible(j.candidate_required_location)) return false
+
+    // Drop jobs with no remote signal anywhere (likely office-required) — mainly
+    // affects Greenhouse, which pulls a company's full board with no remote filter
+    if (!isLikelyRemote(j.candidate_required_location, j.description)) return false
 
     // Exclude title patterns
     if (excludePatterns.some(p => p.test(j.title))) return false
@@ -194,7 +198,7 @@ export async function POST(req: NextRequest) {
       content: `Rank these remote job listings for this candidate. Return any job scoring 4 or above.
 
 ${excludeLine}
-LOCATION: Candidate is US-based. Score 0 and omit any role restricted to non-US geographies (e.g. Europe Only, UK Only, LATAM, APAC). Roles listed as Remote, Worldwide, Anywhere, or US are all fine.
+LOCATION: Candidate is US-based. Score 0 and omit any role restricted to non-US geographies (e.g. Europe Only, UK Only, LATAM, APAC). Roles listed as Remote, Worldwide, Anywhere, or US are all fine. If a listing says "remote" but ties that to residency in or near a specific city/metro (e.g. "fully remote in Washington, DC"), don't treat it as unrestricted remote — note the residency requirement explicitly in fitReason and reduce fitScore accordingly.
 INCLUDE: Partner, Partnerships, Partner Success, Customer Success, Channel, Enablement, Account Management (post-sale), and similar post-sale or go-to-market roles.
 PRIORITIZE: B2B SaaS companies — add +1 to fitScore for any role at a B2B SaaS company vs. equivalent roles in other industries.
 ${dreamLine}
