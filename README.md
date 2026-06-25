@@ -30,6 +30,9 @@ pipeline and runs an automated daily search.
 - **AI fit scoring** — every job is ranked against your profile (target roles,
   seniority, salary floor, title include/exclude rules, company blacklist) with
   a Claude-generated fit score, "why it fits," and concerns to raise.
+- **Resume-aware matching** — upload a resume (PDF or TXT) in Settings; the
+  extracted text is injected into every ranking prompt alongside your profile
+  for sharper fit scoring.
 - **Job aggregation** — pulls remote roles from public boards (RemoteOK) and
   watched company **Greenhouse** boards.
 - **Analyze any posting** — paste a job URL (or description) for an on-demand fit
@@ -57,6 +60,9 @@ pipeline and runs an automated daily search.
   active interview loops) that drives both ranking context and the UI sidebar.
 - **Hands-off automation** — a `launchd` agent calls the daily-search endpoint
   each morning so new ranked matches are waiting without opening the app.
+- **Resume extraction** — an upload route parses PDF/TXT resumes server-side
+  (`pdf-parse`) into plain text, stored as a profile override and merged into
+  the ranking prompt context.
 
 ## Stack
 
