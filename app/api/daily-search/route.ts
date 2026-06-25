@@ -3,7 +3,7 @@ import Anthropic from '@anthropic-ai/sdk'
 import fs from 'fs'
 import path from 'path'
 import { loadCoachingStateRaw } from '@/lib/coaching-state'
-import { fetchAllSources, jobMatchesQuery, isUSEligible } from '@/lib/job-sources'
+import { fetchAllSources, jobMatchesQuery, jobRelevanceScore, isUSEligible } from '@/lib/job-sources'
 import type { RemoteJob, SearchPrefs, ProfileOverrides } from '@/lib/types'
 import { DEFAULT_SEARCH_PREFS } from '@/lib/types'
 
@@ -143,7 +143,14 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ newJobs: [], alreadyRan: false, keywordsUsed: keywords })
   }
 
-  const summaries = candidates.slice(0, 40).map((j, i) => ({
+  const keywordQuery = keywords.join(' ')
+  // Sort by relevance before truncating so the LLM sees the closest titles first,
+  // not just whatever the source APIs happened to return first.
+  const rankedCandidates = [...candidates].sort(
+    (a, b) => jobRelevanceScore(b, keywordQuery) - jobRelevanceScore(a, keywordQuery)
+  )
+
+  const summaries = rankedCandidates.slice(0, 40).map((j, i) => ({
     index: i,
     title: j.title,
     company: j.company_name,
@@ -214,10 +221,10 @@ flag values: "strong_match" (8-10), "good_match" (6-7), "stretch" (4-5). Omit an
   }
 
   const newJobs: RemoteJob[] = rankings
-    .filter(r => r.index < candidates.length)
+    .filter(r => r.index < rankedCandidates.length)
     .map(r => ({
-      ...candidates[r.index],
-      description: (candidates[r.index].description || '').replace(/<[^>]+>/g, '').slice(0, 400),
+      ...rankedCandidates[r.index],
+      description: (rankedCandidates[r.index].description || '').replace(/<[^>]+>/g, '').slice(0, 400),
       fitScore: r.fitScore,
       fitReason: r.fitReason,
       flag: r.flag as RemoteJob['flag'],

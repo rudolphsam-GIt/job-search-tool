@@ -277,6 +277,26 @@ export function jobMatchesQuery(job: RemoteJob, query: string): boolean {
 }
 
 /**
+ * Scores how relevant a job is to a query — title matches weigh far more than
+ * tag/description matches, so a broad OR-match query can still be sorted to put
+ * the closest titles first before truncating the pool sent to the LLM ranker.
+ */
+export function jobRelevanceScore(job: RemoteJob, query: string): number {
+  const terms = query.toLowerCase().split(/\s+/).filter(Boolean)
+  const titleLower = job.title.toLowerCase()
+  const tagsLower = (job.tags || []).join(' ').toLowerCase()
+  const descLower = (job.description || '').toLowerCase()
+
+  let score = 0
+  for (const t of terms) {
+    if (titleLower.includes(t)) score += 5
+    if (tagsLower.includes(t)) score += 2
+    if (descLower.includes(t)) score += 1
+  }
+  return score
+}
+
+/**
  * Returns false for jobs explicitly restricted to non-US geographies.
  * Keeps "Worldwide", "Anywhere", "Remote", US-specific, and ambiguous locations.
  */

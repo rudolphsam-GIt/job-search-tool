@@ -3,7 +3,7 @@ import Anthropic from '@anthropic-ai/sdk'
 import fs from 'fs'
 import path from 'path'
 import { loadCoachingStateRaw } from '@/lib/coaching-state'
-import { fetchAllSources, jobMatchesQuery, isUSEligible } from '@/lib/job-sources'
+import { fetchAllSources, jobMatchesQuery, jobRelevanceScore, isUSEligible } from '@/lib/job-sources'
 import type { RemoteJob, SearchPrefs, ProfileOverrides } from '@/lib/types'
 import { DEFAULT_SEARCH_PREFS } from '@/lib/types'
 
@@ -75,7 +75,11 @@ export async function POST(req: NextRequest) {
   for (const j of filtered) {
     if (!seen.has(j.id)) seen.set(j.id, j)
   }
-  const jobs = Array.from(seen.values()).slice(0, 40)
+  // Sort by relevance before truncating so the LLM sees the closest titles first,
+  // not just whatever the source APIs happened to return first.
+  const jobs = Array.from(seen.values())
+    .sort((a, b) => jobRelevanceScore(b, searchQuery) - jobRelevanceScore(a, searchQuery))
+    .slice(0, 40)
 
   if (jobs.length === 0) {
     return NextResponse.json({ jobs: [], query: searchQuery })
