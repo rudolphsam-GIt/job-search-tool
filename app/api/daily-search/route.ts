@@ -246,8 +246,14 @@ flag values: "strong_match" (8-10), "good_match" (6-7), "stretch" (4-5). Omit an
 
   // Merge into existing newJobs (instead of replacing) so a same-day re-run that finds
   // nothing new — or fewer matches than before — doesn't erase previously surfaced jobs
-  // the candidate hasn't reviewed yet. Drop any that have since been saved/skipped.
-  const stillValid = store.newJobs.filter(j => !skippedSet.has(j.id) && !savedIds.has(j.id))
+  // the candidate hasn't reviewed yet. Drop anything since saved/skipped, and re-validate
+  // against current prefilters so stale results from before a filter change (e.g. an
+  // office-required role found before the remote check existed) don't survive forever.
+  const stillValid = store.newJobs.filter(j =>
+    !skippedSet.has(j.id) && !savedIds.has(j.id) &&
+    isUSEligible(j.candidate_required_location) &&
+    isLikelyRemote(j.candidate_required_location, j.description)
+  )
   const merged = new Map<number, RemoteJob>()
   for (const j of stillValid) merged.set(j.id, j)
   for (const j of newJobs) merged.set(j.id, j)
