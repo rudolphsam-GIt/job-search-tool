@@ -107,6 +107,10 @@ export async function POST(req: NextRequest) {
     ? `\nAdditional candidate context:\n${ov.aiContext.trim()}\n`
     : ''
 
+  const resumeLine = ov.resumeText?.trim()
+    ? `\nCandidate resume (extracted text):\n<resume>\n${ov.resumeText.trim().slice(0, 6000)}\n</resume>\n`
+    : ''
+
   const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
   const rankingMessage = await client.messages.create({
     model: 'claude-sonnet-4-6',
@@ -125,7 +129,7 @@ Candidate profile:
 <coaching_state>
 ${coachingState.slice(0, 3000)}
 </coaching_state>
-${aiContextLine}
+${aiContextLine}${resumeLine}
 
 Jobs:
 ${JSON.stringify(jobSummaries, null, 2)}

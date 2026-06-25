@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useCallback, useRef } from 'react'
+import { useState, useEffect, useCallback, useRef, type ChangeEvent } from 'react'
 import type { Profile, AnalysisResult, RemoteJob, CompanyDetail, SearchPrefs, ProfileOverrides } from '@/lib/types'
 import { DEFAULT_SEARCH_PREFS } from '@/lib/types'
 
@@ -1345,11 +1345,32 @@ function ProfileSection({ profile, overrides, onSave }: {
   const [draft, setDraft] = useState<ProfileOverrides>(overrides)
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
+  const [resumeUploading, setResumeUploading] = useState(false)
+  const [resumeError, setResumeError] = useState('')
 
   useEffect(() => { setDraft(overrides) }, [overrides])
 
   const set = <K extends keyof ProfileOverrides>(key: K, val: ProfileOverrides[K]) =>
     setDraft(d => ({ ...d, [key]: val }))
+
+  const handleResumeUpload = async (e: ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    e.target.value = ''
+    if (!file) return
+    setResumeUploading(true); setResumeError('')
+    try {
+      const body = new FormData()
+      body.append('file', file)
+      const res = await fetch('/api/resume', { method: 'POST', body })
+      const data = await res.json()
+      if (!res.ok) { setResumeError(data.error || 'Upload failed'); return }
+      setDraft(d => ({ ...d, resumeText: data.text, resumeFileName: data.fileName }))
+    } catch {
+      setResumeError('Upload failed — try again')
+    } finally {
+      setResumeUploading(false)
+    }
+  }
 
   const handleSave = async () => {
     setSaving(true); setSaved(false)
@@ -1435,6 +1456,41 @@ function ProfileSection({ profile, overrides, onSave }: {
           onChange={v => set('pastEmployers', v)}
           placeholder="Salesforce, HubSpot — type and press Enter"
         />
+      </div>
+
+      {/* Resume upload */}
+      <div>
+        <label className="block text-xs font-semibold text-zinc-400 uppercase tracking-widest mb-1.5">Resume</label>
+        <p className="text-xs text-zinc-600 mb-2">
+          Upload your resume (.pdf or .txt) for sharper job matching. The extracted text is injected into every ranking prompt alongside your coaching file.
+        </p>
+        <div className="flex items-center gap-3">
+          <label className="cursor-pointer flex items-center gap-2 bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 text-white px-3 py-2 rounded-lg text-sm font-medium transition-colors">
+            {resumeUploading ? <><Spinner /> Parsing…</> : 'Choose File'}
+            <input
+              type="file"
+              accept=".pdf,.txt,.md"
+              onChange={handleResumeUpload}
+              disabled={resumeUploading}
+              className="hidden"
+            />
+          </label>
+          {draft.resumeFileName && (
+            <span className="text-sm text-zinc-400 flex items-center gap-2">
+              {draft.resumeFileName}
+              <button
+                onClick={() => setDraft(d => ({ ...d, resumeText: undefined, resumeFileName: undefined }))}
+                className="text-zinc-600 hover:text-red-400 text-xs underline"
+              >
+                Remove
+              </button>
+            </span>
+          )}
+        </div>
+        {resumeError && <p className="text-xs text-red-400 mt-1.5">{resumeError}</p>}
+        {draft.resumeText && !resumeError && (
+          <p className="text-xs text-zinc-600 mt-1.5">{draft.resumeText.split(/\s+/).length} words extracted — not saved until you click Save Profile below</p>
+        )}
       </div>
 
       {/* AI context */}

@@ -170,6 +170,10 @@ export async function POST(req: NextRequest) {
     ? `\nAdditional candidate context:\n${ov.aiContext.trim()}\n`
     : ''
 
+  const resumeLine = ov.resumeText?.trim()
+    ? `\nCandidate resume (extracted text):\n<resume>\n${ov.resumeText.trim().slice(0, 6000)}\n</resume>\n`
+    : ''
+
   const rankMsg = await client.messages.create({
     model: 'claude-sonnet-4-6',
     max_tokens: 2048,
@@ -188,7 +192,7 @@ Candidate profile:
 <coaching_state>
 ${coachingState.slice(0, 2500)}
 </coaching_state>
-${aiContextLine}
+${aiContextLine}${resumeLine}
 
 Jobs to rank:
 ${JSON.stringify(summaries, null, 2)}

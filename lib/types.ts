@@ -80,6 +80,8 @@ export interface ProfileOverrides {
   strengths?: string[]          // replaces parsed strengths (sidebar)
   pastEmployers?: string[]      // replaces parsed past employers (connection anchors)
   aiContext?: string            // injected verbatim into every AI ranking prompt
+  resumeText?: string           // extracted text from an uploaded resume; injected into every AI ranking prompt
+  resumeFileName?: string       // original filename of the uploaded resume, for display
 }
 
 export interface SearchPrefs {
