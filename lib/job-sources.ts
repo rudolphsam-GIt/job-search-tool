@@ -401,6 +401,28 @@ export async function fetchAllSources(): Promise<RemoteJob[]> {
   return [...remoteOK, ...jobicy, ...wwr, ...muse, ...greenhouse, ...saasJobs, ...lever]
 }
 
+/**
+ * Collapses jobs that are the same role in every way a candidate would notice —
+ * same title, company, and location — even when the source gave them distinct
+ * ids. Companies regularly post multiple identical headcount reqs for one role
+ * (e.g. Stripe posting "Partner Development Manager, Strategic Partnerships"
+ * for the same city list under two separate Greenhouse job ids), which reads as
+ * a confusing duplicate rather than two genuinely different opportunities.
+ * Dedup is keyed on title+company+location together, so the same title at a
+ * different office, or a different title at the same company, both stay distinct.
+ */
+export function dedupeJobs(jobs: RemoteJob[]): RemoteJob[] {
+  const seen = new Set<string>()
+  const result: RemoteJob[] = []
+  for (const job of jobs) {
+    const key = `${job.title.trim().toLowerCase()}|${job.company_name.trim().toLowerCase()}|${job.candidate_required_location.trim().toLowerCase()}`
+    if (seen.has(key)) continue
+    seen.add(key)
+    result.push(job)
+  }
+  return result
+}
+
 export function jobMatchesQuery(job: RemoteJob, query: string): boolean {
   const terms = query.toLowerCase().split(/\s+/)
   const haystack = `${job.title} ${job.company_name} ${(job.tags || []).join(' ')} ${job.description || ''}`.toLowerCase()

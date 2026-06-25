@@ -3,7 +3,7 @@ import Anthropic from '@anthropic-ai/sdk'
 import fs from 'fs'
 import path from 'path'
 import { loadCoachingStateRaw } from '@/lib/coaching-state'
-import { fetchAllSources, jobMatchesQuery, jobRelevanceScore, capPerCompany, isUSEligible, isLikelyRemote } from '@/lib/job-sources'
+import { fetchAllSources, jobMatchesQuery, jobRelevanceScore, capPerCompany, dedupeJobs, isUSEligible, isLikelyRemote } from '@/lib/job-sources'
 import type { RemoteJob, SearchPrefs, ProfileOverrides } from '@/lib/types'
 import { DEFAULT_SEARCH_PREFS } from '@/lib/types'
 
@@ -71,16 +71,18 @@ export async function POST(req: NextRequest) {
     prefs
   )
 
-  // Deduplicate
+  // Deduplicate by id, then collapse same title+company+location postings under
+  // different ids (e.g. a company posting identical headcount reqs twice)
   const seen = new Map<number, RemoteJob>()
   for (const j of filtered) {
     if (!seen.has(j.id)) seen.set(j.id, j)
   }
+  const deduped = dedupeJobs(Array.from(seen.values()))
   // Sort by relevance before truncating so the LLM sees the closest titles first,
   // not just whatever the source APIs happened to return first. Cap per-company
   // duplicates so one employer's many near-identical listings can't crowd out
   // other companies and role types (e.g. partnership roles vs. CS roles).
-  const sorted = Array.from(seen.values())
+  const sorted = deduped
     .sort((a, b) => jobRelevanceScore(b, searchQuery) - jobRelevanceScore(a, searchQuery))
   const jobs = capPerCompany(sorted, 3).slice(0, 50)
 

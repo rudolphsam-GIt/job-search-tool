@@ -3,7 +3,7 @@ import Anthropic from '@anthropic-ai/sdk'
 import fs from 'fs'
 import path from 'path'
 import { loadCoachingStateRaw } from '@/lib/coaching-state'
-import { fetchAllSources, jobMatchesQuery, jobRelevanceScore, capPerCompany, isUSEligible, isLikelyRemote } from '@/lib/job-sources'
+import { fetchAllSources, jobMatchesQuery, jobRelevanceScore, capPerCompany, dedupeJobs, isUSEligible, isLikelyRemote } from '@/lib/job-sources'
 import type { RemoteJob, SearchPrefs, ProfileOverrides } from '@/lib/types'
 import { DEFAULT_SEARCH_PREFS } from '@/lib/types'
 
@@ -123,11 +123,13 @@ export async function POST(req: NextRequest) {
   const relevant = allJobs.filter(j => jobMatchesQuery(j, keywords.join(' ')))
   const pool = relevant.length >= 10 ? relevant : allJobs // fallback to all if too few
 
-  // Deduplicate by ID
+  // Deduplicate by id, then collapse same title+company+location postings under
+  // different ids (e.g. a company posting identical headcount reqs twice)
   const seenMap = new Map<number, RemoteJob>()
   for (const job of pool) {
     if (!seenMap.has(job.id)) seenMap.set(job.id, job)
   }
+  const dedupedPool = dedupeJobs(Array.from(seenMap.values()))
 
   const skippedSet = new Set(store.skipped)
   const seenIds = new Set(Object.keys(store.seen).map(Number))
@@ -135,7 +137,7 @@ export async function POST(req: NextRequest) {
 
   // Apply user prefs (title filters, blacklist, salary floor) before handing to Claude
   const candidates = applyPrefilters(
-    Array.from(seenMap.values()).filter(
+    dedupedPool.filter(
       j => !seenIds.has(j.id) && !skippedSet.has(j.id) && !savedIds.has(j.id)
     ),
     prefs
@@ -258,7 +260,7 @@ flag values: "strong_match" (8-10), "good_match" (6-7), "stretch" (4-5). Omit an
   for (const j of stillValid) merged.set(j.id, j)
   for (const j of newJobs) merged.set(j.id, j)
 
-  store.newJobs = Array.from(merged.values()).sort((a, b) => (b.fitScore || 0) - (a.fitScore || 0))
+  store.newJobs = dedupeJobs(Array.from(merged.values())).sort((a, b) => (b.fitScore || 0) - (a.fitScore || 0))
   store.lastSearched = today
   writeStore(store)
 
