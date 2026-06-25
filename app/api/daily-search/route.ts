@@ -140,7 +140,9 @@ export async function POST(req: NextRequest) {
   if (candidates.length === 0) {
     store.lastSearched = today
     writeStore(store)
-    return NextResponse.json({ newJobs: [], alreadyRan: false, keywordsUsed: keywords })
+    // No new candidates today — keep whatever was already surfaced and not yet reviewed,
+    // rather than reporting an empty feed when good matches are still sitting there.
+    return NextResponse.json({ newJobs: store.newJobs, alreadyRan: false, keywordsUsed: keywords })
   }
 
   const keywordQuery = keywords.join(' ')
@@ -238,7 +240,15 @@ flag values: "strong_match" (8-10), "good_match" (6-7), "stretch" (4-5). Omit an
     store.seen[j.id] = today
   }
 
-  store.newJobs = newJobs
+  // Merge into existing newJobs (instead of replacing) so a same-day re-run that finds
+  // nothing new — or fewer matches than before — doesn't erase previously surfaced jobs
+  // the candidate hasn't reviewed yet. Drop any that have since been saved/skipped.
+  const stillValid = store.newJobs.filter(j => !skippedSet.has(j.id) && !savedIds.has(j.id))
+  const merged = new Map<number, RemoteJob>()
+  for (const j of stillValid) merged.set(j.id, j)
+  for (const j of newJobs) merged.set(j.id, j)
+
+  store.newJobs = Array.from(merged.values()).sort((a, b) => (b.fitScore || 0) - (a.fitScore || 0))
   store.lastSearched = today
   writeStore(store)
 
