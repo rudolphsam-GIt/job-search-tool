@@ -171,6 +171,69 @@ export async function fetchWWR(): Promise<RemoteJob[]> {
   } catch { return [] }
 }
 
+// ── The SaaS Jobs ─────────────────────────────────────────────────────────────
+// No public API — listing pages embed a `window.jobsList.concat([...])` JSON
+// blob with full job records, including an authoritative `remote` boolean.
+// Most listings are NOT remote (general SaaS board, not remote-only), so this
+// filters to remote:true at the source rather than relying on text heuristics.
+// robots.txt asks for a 1s crawl-delay, so pages are fetched sequentially.
+
+interface SaaSJobsJob {
+  id: number
+  title: string
+  description?: string
+  location?: string
+  remote: boolean
+  min_compensation?: number | null
+  max_compensation?: number | null
+  posted_at?: string
+  job_details_path: string
+  employer?: { name: string; logo?: string }
+  tags?: { name: string }[]
+}
+
+async function fetchSaaSJobsPage(page: number): Promise<SaaSJobsJob[]> {
+  try {
+    const res = await fetch(`https://www.thesaasjobs.com/jobs?page=${page}`, {
+      headers: { 'User-Agent': 'Mozilla/5.0' },
+      signal: AbortSignal.timeout(10000),
+    })
+    const html = await res.text()
+    const match = html.match(/window\.jobsList\.concat\((\[.*?\])\);/s)
+    return match ? JSON.parse(match[1]) : []
+  } catch { return [] }
+}
+
+export async function fetchTheSaaSJobs(pages = 8): Promise<RemoteJob[]> {
+  const jobs: RemoteJob[] = []
+  for (let page = 1; page <= pages; page++) {
+    const pageJobs = await fetchSaaSJobsPage(page)
+    if (pageJobs.length === 0) break
+    for (const j of pageJobs) {
+      if (!j.remote) continue
+      const salary = j.min_compensation && j.max_compensation
+        ? `$${Math.round(j.min_compensation / 1000)}k–$${Math.round(j.max_compensation / 1000)}k`
+        : j.min_compensation ? `From $${Math.round(j.min_compensation / 1000)}k` : ''
+      jobs.push({
+        id: j.id,
+        url: `https://www.thesaasjobs.com${j.job_details_path}`,
+        title: j.title,
+        company_name: j.employer?.name || '',
+        company_logo: j.employer?.logo,
+        category: 'remote',
+        tags: (j.tags || []).map(t => t.name),
+        job_type: 'full_time',
+        publication_date: j.posted_at || new Date().toISOString(),
+        candidate_required_location: `Remote${j.location ? ` (${j.location})` : ''}`,
+        salary,
+        description: (j.description || '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 500),
+      } as RemoteJob)
+    }
+    if (page < pages) await new Promise(r => setTimeout(r, 1000))
+  }
+  return jobs
+}
+
 // ── Greenhouse ────────────────────────────────────────────────────────────────
 // Public per-company boards — no auth required.
 // Add/remove slugs to tune which companies are monitored.
@@ -264,10 +327,10 @@ export async function fetchGreenhouse(): Promise<RemoteJob[]> {
 }
 
 export async function fetchAllSources(): Promise<RemoteJob[]> {
-  const [remoteOK, jobicy, wwr, muse, greenhouse] = await Promise.all([
-    fetchRemoteOK(), fetchJobicy(), fetchWWR(), fetchTheMuse(), fetchGreenhouse(),
+  const [remoteOK, jobicy, wwr, muse, greenhouse, saasJobs] = await Promise.all([
+    fetchRemoteOK(), fetchJobicy(), fetchWWR(), fetchTheMuse(), fetchGreenhouse(), fetchTheSaaSJobs(),
   ])
-  return [...remoteOK, ...jobicy, ...wwr, ...muse, ...greenhouse]
+  return [...remoteOK, ...jobicy, ...wwr, ...muse, ...greenhouse, ...saasJobs]
 }
 
 export function jobMatchesQuery(job: RemoteJob, query: string): boolean {

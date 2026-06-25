@@ -1126,7 +1126,7 @@ function SearchTab({
             {searchLoading ? <><Spinner /> Searching…</> : 'Search'}
           </button>
         </div>
-        <p className="text-xs text-zinc-600 mt-2">Remote only · ranked by profile fit · RemoteOK, Jobicy, WWR, The Muse</p>
+        <p className="text-xs text-zinc-600 mt-2">Remote only · ranked by profile fit · RemoteOK, Jobicy, WWR, The Muse, The SaaS Jobs</p>
       </div>
 
       {error && <div className="flex items-center gap-2 text-sm text-red-400 bg-red-500/10 border border-red-500/20 px-4 py-3 rounded-xl"><span>⚠</span> {error}</div>}
