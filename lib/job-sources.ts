@@ -326,11 +326,79 @@ export async function fetchGreenhouse(): Promise<RemoteJob[]> {
   return results.flat()
 }
 
+// ── Lever ─────────────────────────────────────────────────────────────────────
+// Public per-company boards via api.lever.co — same model as Greenhouse, but a
+// different set of companies use Lever instead. Slugs don't map predictably
+// from company name, so each one below was verified to return live postings.
+const LEVER_COMPANIES = [
+  // Sales engagement / enablement / revenue
+  'outreach', 'highspot', 'mindtickle', 'clari',
+  // CRM / customer comms
+  'pipedrive', 'aircall', 'freshworks',
+  // Security / compliance SaaS
+  'secureframe',
+  // Fintech infra / HR / recruiting SaaS
+  'plaid', '15five', 'jobvite',
+]
+
+const LEVER_NAMES: Record<string, string> = {
+  outreach: 'Outreach', highspot: 'Highspot', mindtickle: 'MindTickle', clari: 'Clari',
+  pipedrive: 'Pipedrive', aircall: 'Aircall', freshworks: 'Freshworks',
+  secureframe: 'Secureframe', plaid: 'Plaid', '15five': '15Five', jobvite: 'Jobvite',
+}
+
+interface LeverJob {
+  id: string
+  text: string
+  hostedUrl: string
+  createdAt: number
+  descriptionPlain?: string
+  workplaceType?: string
+  country?: string
+  categories?: { location?: string; allLocations?: string[]; team?: string; department?: string }
+}
+
+async function fetchLeverCompany(slug: string, idOffset: number, displayName?: string): Promise<RemoteJob[]> {
+  try {
+    const res = await fetch(
+      `https://api.lever.co/v0/postings/${slug}?mode=json`,
+      { signal: AbortSignal.timeout(8000) }
+    )
+    if (!res.ok) return []
+    const jobs: LeverJob[] = await res.json()
+    return jobs.map((j, i) => {
+      const isRemote = j.workplaceType === 'remote'
+      const location = j.categories?.location || j.categories?.allLocations?.join(', ') || j.country || ''
+      return {
+        id: idOffset + i,
+        url: j.hostedUrl,
+        title: j.text,
+        company_name: displayName || LEVER_NAMES[slug] || slug.charAt(0).toUpperCase() + slug.slice(1),
+        company_logo: `https://logo.clearbit.com/${slug}.com`,
+        category: (j.categories?.team || j.categories?.department || 'remote').toLowerCase(),
+        tags: [j.categories?.team, j.categories?.department].filter(Boolean) as string[],
+        job_type: 'full_time',
+        publication_date: j.createdAt ? new Date(j.createdAt).toISOString() : new Date().toISOString(),
+        candidate_required_location: isRemote ? `Remote${location ? ` (${location})` : ''}` : (location || 'Unspecified'),
+        salary: '',
+        description: (j.descriptionPlain || '').replace(/\s+/g, ' ').trim().slice(0, 500),
+      } as RemoteJob
+    })
+  } catch { return [] }
+}
+
+export async function fetchLever(): Promise<RemoteJob[]> {
+  const results = await Promise.all(
+    LEVER_COMPANIES.map((slug, i) => fetchLeverCompany(slug, 4000000 + i * 1000, LEVER_NAMES[slug]))
+  )
+  return results.flat()
+}
+
 export async function fetchAllSources(): Promise<RemoteJob[]> {
-  const [remoteOK, jobicy, wwr, muse, greenhouse, saasJobs] = await Promise.all([
-    fetchRemoteOK(), fetchJobicy(), fetchWWR(), fetchTheMuse(), fetchGreenhouse(), fetchTheSaaSJobs(),
+  const [remoteOK, jobicy, wwr, muse, greenhouse, saasJobs, lever] = await Promise.all([
+    fetchRemoteOK(), fetchJobicy(), fetchWWR(), fetchTheMuse(), fetchGreenhouse(), fetchTheSaaSJobs(), fetchLever(),
   ])
-  return [...remoteOK, ...jobicy, ...wwr, ...muse, ...greenhouse, ...saasJobs]
+  return [...remoteOK, ...jobicy, ...wwr, ...muse, ...greenhouse, ...saasJobs, ...lever]
 }
 
 export function jobMatchesQuery(job: RemoteJob, query: string): boolean {

@@ -44,15 +44,16 @@ pipeline and runs an automated daily search.
 
 ## Technical highlights
 
-- **Multi-source aggregation** — fans out to six job sources in parallel
+- **Multi-source aggregation** — fans out to seven job sources in parallel
   (RemoteOK, Jobicy, We Work Remotely, The Muse, per-company **Greenhouse**
-  boards via the `boards-api`, and **The SaaS Jobs**, scraped from an embedded
-  `window.jobsList` JSON blob since it has no public API) with `Promise.all`,
-  normalizing each into a single `RemoteJob` shape.
+  and **Lever** boards via their public APIs, and **The SaaS Jobs**, scraped
+  from an embedded `window.jobsList` JSON blob since it has no public API)
+  with `Promise.all`, normalizing each into a single `RemoteJob` shape.
 - **Profile-aware filtering** — applies title include/exclude rules, a salary
   floor, a company blacklist, US-eligibility heuristics, and a remote-signal
-  check (location text or description must confirm remote — Greenhouse and
-  The SaaS Jobs both surface a lot of office-required roles otherwise) before
+  check (location text or description must confirm remote — Greenhouse,
+  Lever, and The SaaS Jobs all pull a company's full board or general
+  listings, surfacing plenty of office-required roles otherwise) before
   anything reaches the model.
 - **LLM ranking with structured output** — batches candidates to Claude
   (`claude-sonnet-4-6`) and parses a strict JSON contract back into per-job fit
