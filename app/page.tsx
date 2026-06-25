@@ -94,10 +94,15 @@ function Spinner({ size = 'sm' }: { size?: 'sm' | 'lg' }) {
 
 // ── Job Card ──────────────────────────────────────────────────────────────────
 
+const PIPELINE_STATUS_LABELS: Record<string, string> = {
+  saved: 'Saved', applied: 'Applied', active: 'Active', archived: 'Archived',
+}
+
 function JobCard({
   job,
   isSaved,
   isNew,
+  pipelineStatus,
   onSave,
   onSkip,
   onUnsave,
@@ -107,12 +112,16 @@ function JobCard({
   job: RemoteJob & { foundDate?: string; savedAt?: string }
   isSaved?: boolean
   isNew?: boolean
+  pipelineStatus?: RemoteJob['status']
   onSave?: (job: RemoteJob) => void
   onSkip?: (job: RemoteJob) => void
   onUnsave?: (job: RemoteJob) => void
   onAnalyze?: (url: string) => void
   hideActions?: boolean
 }) {
+  const effectiveSaved = isSaved || pipelineStatus === 'saved'
+  const statusLabel = pipelineStatus ? PIPELINE_STATUS_LABELS[pipelineStatus] : (effectiveSaved ? 'Saved' : undefined)
+
   return (
     <div className={`bg-zinc-900 border rounded-xl p-5 transition-colors group ${
       isNew ? 'border-blue-500/40 hover:border-blue-500/60' : 'border-zinc-800 hover:border-zinc-700'
@@ -136,8 +145,8 @@ function JobCard({
               {isNew && (
                 <span className="text-xs bg-blue-500/20 border border-blue-500/30 text-blue-300 px-2 py-0.5 rounded-full font-semibold">New</span>
               )}
-              {isSaved && (
-                <span className="text-xs bg-emerald-500/15 border border-emerald-500/30 text-emerald-400 px-2 py-0.5 rounded-full font-semibold">Saved</span>
+              {statusLabel && (
+                <span className="text-xs bg-emerald-500/15 border border-emerald-500/30 text-emerald-400 px-2 py-0.5 rounded-full font-semibold">{statusLabel}</span>
               )}
             </div>
             {job.fitScore && <FitBadge score={job.fitScore} flag={job.flag} />}
@@ -168,7 +177,9 @@ function JobCard({
           {/* Actions */}
           {!hideActions && (
             <div className="flex items-center gap-2 flex-wrap">
-              {isSaved ? (
+              {pipelineStatus && pipelineStatus !== 'saved' ? (
+                <span className="text-xs text-zinc-500 px-1">Already in your pipeline — manage status on the Pipeline tab</span>
+              ) : effectiveSaved ? (
                 <button onClick={() => onUnsave?.(job)}
                   className="flex items-center gap-1.5 text-xs text-emerald-400 hover:text-emerald-300 bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/30 px-3 py-1.5 rounded-lg transition-colors font-medium">
                   <IconBookmark filled />
@@ -190,7 +201,7 @@ function JobCard({
                   Analyze
                 </button>
               )}
-              {!isSaved && (
+              {!effectiveSaved && !pipelineStatus && (
                 <button onClick={() => onSkip?.(job)}
                   className="flex items-center gap-1.5 text-xs text-zinc-500 hover:text-zinc-300 hover:bg-zinc-800 border border-transparent hover:border-zinc-700 px-3 py-1.5 rounded-lg transition-colors">
                   <IconX />
@@ -928,12 +939,14 @@ function SearchTab({
   defaultQuery,
   savedIds,
   newJobIds,
+  addedStatus,
   onStoreChange,
   onAnalyze,
 }: {
   defaultQuery: string
   savedIds: Set<number>
   newJobIds: Set<number>
+  addedStatus: Map<number, RemoteJob['status']>
   onStoreChange: (store: StoreUpdate) => void
   onAnalyze?: (url: string) => void
 }) {
@@ -947,6 +960,8 @@ function SearchTab({
   const [usedQuery, setUsedQuery] = useState('')
   const [error, setError] = useState('')
   const [searched, setSearched] = useState(false)
+  const [showDailyAdded, setShowDailyAdded] = useState(false)
+  const [showSearchAdded, setShowSearchAdded] = useState(false)
 
   const { save, skip, unsave } = useJobActions(store => {
     setDailyJobs(store.newJobs)
@@ -1008,6 +1023,11 @@ function SearchTab({
   const today = new Date().toISOString().slice(0, 10)
   const isStale = lastSearched !== today
 
+  const dailyNew = dailyJobs.filter(j => !addedStatus.has(j.id))
+  const dailyAdded = dailyJobs.filter(j => addedStatus.has(j.id))
+  const searchNew = searchJobs.filter(j => !addedStatus.has(j.id))
+  const searchAdded = searchJobs.filter(j => addedStatus.has(j.id))
+
   return (
     <div className="space-y-5">
       {/* Daily feed */}
@@ -1040,9 +1060,9 @@ function SearchTab({
         </div>
       )}
 
-      {!dailyLoading && dailyJobs.length > 0 && (
+      {!dailyLoading && dailyNew.length > 0 && (
         <div className="space-y-3">
-          {dailyJobs.map(job => (
+          {dailyNew.map(job => (
             <JobCard
               key={job.id}
               job={job}
@@ -1054,6 +1074,32 @@ function SearchTab({
               onAnalyze={onAnalyze}
             />
           ))}
+        </div>
+      )}
+
+      {!dailyLoading && dailyAdded.length > 0 && (
+        <div className="bg-zinc-900 border border-zinc-800 rounded-xl overflow-hidden">
+          <button
+            onClick={() => setShowDailyAdded(v => !v)}
+            className="w-full flex items-center justify-between px-4 py-3 text-xs font-semibold text-zinc-500 uppercase tracking-widest hover:text-zinc-400 transition-colors"
+          >
+            Already Added ({dailyAdded.length})
+            <span className={`transition-transform ${showDailyAdded ? 'rotate-180' : ''}`}><IconChevronDown /></span>
+          </button>
+          {showDailyAdded && (
+            <div className="px-4 pb-4 space-y-3 border-t border-zinc-800 pt-4">
+              {dailyAdded.map(job => (
+                <JobCard
+                  key={job.id}
+                  job={job}
+                  pipelineStatus={addedStatus.get(job.id)}
+                  onSave={save}
+                  onUnsave={unsave}
+                  onAnalyze={onAnalyze}
+                />
+              ))}
+            </div>
+          )}
         </div>
       )}
 
@@ -1093,24 +1139,56 @@ function SearchTab({
       )}
 
       {!searchLoading && searchJobs.length > 0 && (
-        <div>
-          <p className="text-xs text-zinc-500 mb-3 px-1">
+        <div className="space-y-4">
+          <p className="text-xs text-zinc-500 px-1">
             <span className="text-white font-medium">{searchJobs.length}</span> results for &ldquo;{usedQuery}&rdquo;
           </p>
-          <div className="space-y-3">
-            {searchJobs.map(job => (
-              <JobCard
-                key={job.id}
-                job={job}
-                isSaved={savedIds.has(job.id)}
-                isNew={newJobIds.has(job.id)}
-                onSave={save}
-                onSkip={skip}
-                onUnsave={unsave}
-                onAnalyze={onAnalyze}
-              />
-            ))}
-          </div>
+
+          {searchNew.length > 0 && (
+            <div>
+              <p className="text-xs font-semibold text-zinc-500 uppercase tracking-widest mb-3">New ({searchNew.length})</p>
+              <div className="space-y-3">
+                {searchNew.map(job => (
+                  <JobCard
+                    key={job.id}
+                    job={job}
+                    isSaved={savedIds.has(job.id)}
+                    isNew={newJobIds.has(job.id)}
+                    onSave={save}
+                    onSkip={skip}
+                    onUnsave={unsave}
+                    onAnalyze={onAnalyze}
+                  />
+                ))}
+              </div>
+            </div>
+          )}
+
+          {searchAdded.length > 0 && (
+            <div className="bg-zinc-900 border border-zinc-800 rounded-xl overflow-hidden">
+              <button
+                onClick={() => setShowSearchAdded(v => !v)}
+                className="w-full flex items-center justify-between px-4 py-3 text-xs font-semibold text-zinc-500 uppercase tracking-widest hover:text-zinc-400 transition-colors"
+              >
+                Already Added ({searchAdded.length})
+                <span className={`transition-transform ${showSearchAdded ? 'rotate-180' : ''}`}><IconChevronDown /></span>
+              </button>
+              {showSearchAdded && (
+                <div className="px-4 pb-4 space-y-3 border-t border-zinc-800 pt-4">
+                  {searchAdded.map(job => (
+                    <JobCard
+                      key={job.id}
+                      job={job}
+                      pipelineStatus={addedStatus.get(job.id)}
+                      onSave={save}
+                      onUnsave={unsave}
+                      onAnalyze={onAnalyze}
+                    />
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
         </div>
       )}
 
@@ -2056,6 +2134,12 @@ export default function Home() {
 
   const savedIds = new Set(savedJobs.map(j => j.id))
   const newJobIds = new Set(newJobs.map(j => j.id))
+  const addedStatus = new Map<number, RemoteJob['status']>([
+    ...savedJobs.map(j => [j.id, 'saved'] as [number, RemoteJob['status']]),
+    ...appliedJobs.map(j => [j.id, 'applied'] as [number, RemoteJob['status']]),
+    ...activeJobs.map(j => [j.id, 'active'] as [number, RemoteJob['status']]),
+    ...archivedJobs.map(j => [j.id, 'archived'] as [number, RemoteJob['status']]),
+  ])
   const defaultSearchQuery = profile?.targetRoles?.[0]?.split('/')[0]?.trim() || ''
   const pipelineCount = savedJobs.length + appliedJobs.length + activeJobs.length
 
@@ -2132,6 +2216,7 @@ export default function Home() {
                   defaultQuery={defaultSearchQuery}
                   savedIds={savedIds}
                   newJobIds={newJobIds}
+                  addedStatus={addedStatus}
                   onStoreChange={handleStoreChange}
                   onAnalyze={handleAnalyzeShortcut}
                 />
