@@ -180,6 +180,10 @@ export async function POST(req: NextRequest) {
     ? `DREAM COMPANIES: The candidate especially wants to work at these companies — add +2 to fitScore for any role at: ${prefs.dreamCompanies.join(', ')}.`
     : ''
 
+  const watchlistLine = prefs.watchlistCompanies?.length
+    ? `WATCHLIST COMPANIES: The candidate specifically wants to track these companies: ${prefs.watchlistCompanies.join(', ')}. Include ALL roles from these companies in your response as long as fitScore >= 2 (even if below the normal 4 threshold). Use flag "watchlist_stretch" for any watchlist company role scoring below 4.`
+    : ''
+
   const salaryLine = prefs.minSalary
     ? `SALARY FLOOR: Candidate's minimum is $${Math.round(prefs.minSalary / 1000)}k. If a job's listed salary max is explicitly below this, score it 0 and omit.`
     : ''
@@ -197,13 +201,14 @@ export async function POST(req: NextRequest) {
     max_tokens: 3072,
     messages: [{
       role: 'user',
-      content: `Rank these remote job listings for this candidate. Return any job scoring 4 or above.
+      content: `Rank these remote job listings for this candidate. Return jobs scoring 4 or above, plus any watchlist company roles scoring 2 or above.
 
 ${excludeLine}
 LOCATION: Candidate is US-based. Score 0 and omit any role restricted to non-US geographies (e.g. Europe Only, UK Only, LATAM, APAC). Roles listed as Remote, Worldwide, Anywhere, or US are all fine. If a listing says "remote" but ties that to residency in or near a specific city/metro (e.g. "fully remote in Washington, DC"), don't treat it as unrestricted remote — note the residency requirement explicitly in fitReason and reduce fitScore accordingly.
 INCLUDE: Partner, Partnerships, Partner Success, Customer Success, Channel, Enablement, Account Management (post-sale), and similar post-sale or go-to-market roles.
 PRIORITIZE: B2B SaaS companies — add +1 to fitScore for any role at a B2B SaaS company vs. equivalent roles in other industries.
 ${dreamLine}
+${watchlistLine}
 ${salaryLine}
 
 Candidate profile:
@@ -218,7 +223,7 @@ ${JSON.stringify(summaries, null, 2)}
 Return ONLY a JSON array sorted by fitScore descending (no markdown):
 [{"index": 0, "fitScore": 8, "fitReason": "one sentence why this fits", "flag": "strong_match"}]
 
-flag values: "strong_match" (8-10), "good_match" (6-7), "stretch" (4-5). Omit anything below 4.`,
+flag values: "strong_match" (8-10), "good_match" (6-7), "stretch" (4-5), "watchlist_stretch" (2-3, watchlist companies only). Omit below 4 unless from a watchlist company.`,
     }],
   })
 
@@ -231,6 +236,7 @@ flag values: "strong_match" (8-10), "good_match" (6-7), "stretch" (4-5). Omit an
     rankings = []
   }
 
+  const watchlistSet = new Set((prefs.watchlistCompanies || []).map(c => c.toLowerCase()))
   const newJobs: RemoteJob[] = rankings
     .filter(r => r.index < rankedCandidates.length)
     .map(r => ({
@@ -239,6 +245,7 @@ flag values: "strong_match" (8-10), "good_match" (6-7), "stretch" (4-5). Omit an
       fitScore: r.fitScore,
       fitReason: r.fitReason,
       flag: r.flag as RemoteJob['flag'],
+      watchlisted: watchlistSet.has(rankedCandidates[r.index].company_name.toLowerCase()),
       foundDate: today,
     } as RemoteJob))
 

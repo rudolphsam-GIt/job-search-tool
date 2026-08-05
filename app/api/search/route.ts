@@ -108,6 +108,10 @@ export async function POST(req: NextRequest) {
     ? `DREAM COMPANIES: Add +2 to fitScore for any role at: ${prefs.dreamCompanies.join(', ')}.`
     : ''
 
+  const watchlistLine = prefs.watchlistCompanies?.length
+    ? `WATCHLIST COMPANIES: The candidate specifically wants to track these companies: ${prefs.watchlistCompanies.join(', ')}. Include ALL roles from these companies in your response as long as fitScore >= 2 (even if below the normal 4 threshold). Use flag "watchlist_stretch" for any watchlist company role scoring below 4.`
+    : ''
+
   const salaryLine = prefs.minSalary
     ? `SALARY FLOOR: $${Math.round(prefs.minSalary / 1000)}k minimum. Score 0 and omit if listed max is explicitly below this.`
     : ''
@@ -126,12 +130,13 @@ export async function POST(req: NextRequest) {
     max_tokens: 3072,
     messages: [{
       role: 'user',
-      content: `Rank these remote job opportunities for this candidate. Only return jobs scoring 4 or above.
+      content: `Rank these remote job opportunities for this candidate. Return jobs scoring 4 or above, plus any watchlist company roles scoring 2 or above.
 
 ${excludeLine}
 LOCATION: Candidate is US-based. Score 0 and omit any role restricted to non-US geographies (e.g. Europe Only, UK Only, LATAM, APAC). Remote, Worldwide, Anywhere, and US-specific roles are all fine. If a listing says "remote" but ties that to residency in or near a specific city/metro (e.g. "fully remote in Washington, DC"), don't treat it as unrestricted remote — note the residency requirement explicitly in fitReason and reduce fitScore accordingly.
 PRIORITIZE: B2B SaaS companies get +1 to fitScore.
 ${dreamLine}
+${watchlistLine}
 ${salaryLine}
 
 Candidate profile:
@@ -146,7 +151,7 @@ ${JSON.stringify(jobSummaries, null, 2)}
 Return ONLY a JSON array sorted by fitScore descending (no markdown):
 [{"index": 0, "fitScore": 8, "fitReason": "one sentence", "flag": "strong_match"}]
 
-flag values: "strong_match" (8-10), "good_match" (6-7), "stretch" (4-5). Omit below 4.`,
+flag values: "strong_match" (8-10), "good_match" (6-7), "stretch" (4-5), "watchlist_stretch" (2-3, watchlist companies only). Omit below 4 unless from a watchlist company.`,
     }],
   })
 
@@ -159,6 +164,7 @@ flag values: "strong_match" (8-10), "good_match" (6-7), "stretch" (4-5). Omit be
     rankings = []
   }
 
+  const watchlistSet = new Set((prefs.watchlistCompanies || []).map(c => c.toLowerCase()))
   const rankedJobs = rankings
     .filter(r => r.index < jobs.length)
     .map(r => ({
@@ -167,6 +173,7 @@ flag values: "strong_match" (8-10), "good_match" (6-7), "stretch" (4-5). Omit be
       fitScore: r.fitScore,
       fitReason: r.fitReason,
       flag: r.flag,
+      watchlisted: watchlistSet.has(jobs[r.index].company_name.toLowerCase()),
     }))
 
   return NextResponse.json({ jobs: rankedJobs, query: searchQuery })

@@ -122,8 +122,11 @@ function JobCard({
   const effectiveSaved = isSaved || pipelineStatus === 'saved'
   const statusLabel = pipelineStatus ? PIPELINE_STATUS_LABELS[pipelineStatus] : (effectiveSaved ? 'Saved' : undefined)
 
+  const isWatchlist = job.watchlisted || job.flag === 'watchlist_stretch'
+
   return (
     <div className={`bg-zinc-900 border rounded-xl p-5 transition-colors group ${
+      isWatchlist ? 'border-violet-500/40 hover:border-violet-500/60' :
       isNew ? 'border-blue-500/40 hover:border-blue-500/60' : 'border-zinc-800 hover:border-zinc-700'
     }`}>
       <div className="flex items-start gap-4">
@@ -144,6 +147,9 @@ function JobCard({
               </a>
               {isNew && (
                 <span className="text-xs bg-blue-500/20 border border-blue-500/30 text-blue-300 px-2 py-0.5 rounded-full font-semibold">New</span>
+              )}
+              {isWatchlist && (
+                <span className="text-xs bg-violet-500/20 border border-violet-500/30 text-violet-300 px-2 py-0.5 rounded-full font-semibold">Watching</span>
               )}
               {statusLabel && (
                 <span className="text-xs bg-emerald-500/15 border border-emerald-500/30 text-emerald-400 px-2 py-0.5 rounded-full font-semibold">{statusLabel}</span>
@@ -245,10 +251,16 @@ function ScoreRing({ score }: { score: number }) {
 // ── Badges ────────────────────────────────────────────────────────────────────
 
 function FitBadge({ score, flag }: { score: number; flag?: string }) {
-  const cls = score >= 8 ? 'bg-emerald-500/15 border-emerald-500/30 text-emerald-400'
+  const isWatchlistStretch = flag === 'watchlist_stretch'
+  const cls = isWatchlistStretch ? 'bg-violet-500/15 border-violet-500/30 text-violet-400'
+    : score >= 8 ? 'bg-emerald-500/15 border-emerald-500/30 text-emerald-400'
     : score >= 6 ? 'bg-blue-500/15 border-blue-500/30 text-blue-400'
     : 'bg-amber-500/15 border-amber-500/30 text-amber-400'
-  const label = flag === 'strong_match' ? 'Strong match' : flag === 'good_match' ? 'Good match' : flag === 'stretch' ? 'Stretch' : `${score}/10`
+  const label = flag === 'strong_match' ? 'Strong match'
+    : flag === 'good_match' ? 'Good match'
+    : flag === 'stretch' ? 'Stretch'
+    : flag === 'watchlist_stretch' ? 'Watchlist stretch'
+    : `${score}/10`
   return <span className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold border ${cls}`}>{score}/10 · {label}</span>
 }
 
@@ -931,6 +943,114 @@ function useJobActions(onStoreChange: (store: StoreUpdate) => void) {
     unsave: (job: RemoteJob) => act('unsave', job),
     setStatus: (job: RemoteJob, newStatus: RemoteJob['status']) => act('setStatus', job, { newStatus }),
   }
+}
+
+// ── Watchlist Tab ─────────────────────────────────────────────────────────────
+
+function WatchlistTab({
+  watchlistCompanies,
+  savedIds,
+  addedStatus,
+  onStoreChange,
+  onAnalyze,
+}: {
+  watchlistCompanies: string[]
+  savedIds: Set<number>
+  addedStatus: Map<number, RemoteJob['status']>
+  onStoreChange: (store: StoreUpdate) => void
+  onAnalyze?: (url: string) => void
+}) {
+  const [jobs, setJobs] = useState<RemoteJob[]>([])
+  const [loading, setLoading] = useState(false)
+  const [ran, setRan] = useState(false)
+
+  const watchlistSet = new Set(watchlistCompanies.map(c => c.toLowerCase()))
+
+  const scan = async () => {
+    setLoading(true)
+    try {
+      const res = await fetch('/api/daily-search', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ force: true }),
+      })
+      const data = await res.json()
+      const all: RemoteJob[] = data.newJobs || []
+      setJobs(all.filter(j => j.watchlisted || watchlistSet.has(j.company_name.toLowerCase())))
+      setRan(true)
+      onStoreChange(data)
+    } finally { setLoading(false) }
+  }
+
+  // Load from store on mount
+  useEffect(() => {
+    fetch('/api/jobs-store', { method: 'GET' })
+      .then(r => r.json())
+      .then(data => {
+        const all: RemoteJob[] = data.newJobs || []
+        const filtered = all.filter(j => j.watchlisted || watchlistSet.has(j.company_name.toLowerCase()))
+        setJobs(filtered)
+        setRan(true)
+      })
+      .catch(() => {})
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
+  const handleAction = async (action: 'save' | 'skip', job: RemoteJob) => {
+    await fetch('/api/jobs-store', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action, job }),
+    }).then(r => r.json()).then(onStoreChange)
+  }
+
+  if (watchlistCompanies.length === 0) {
+    return (
+      <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-8 text-center">
+        <p className="text-zinc-400 text-sm mb-2">No companies on your watchlist yet.</p>
+        <p className="text-zinc-600 text-xs">Add companies in Settings → Company Watchlist.</p>
+      </div>
+    )
+  }
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between">
+        <div>
+          <h2 className="text-sm font-semibold text-white">Watching</h2>
+          <p className="text-xs text-zinc-500 mt-0.5">
+            {watchlistCompanies.join(', ')} — all open roles, including stretch fits
+          </p>
+        </div>
+        <button onClick={scan} disabled={loading}
+          className="flex items-center gap-2 bg-violet-600 hover:bg-violet-500 disabled:opacity-40 text-white px-4 py-2 rounded-lg text-sm font-semibold transition-colors">
+          <IconRefresh spinning={loading} />
+          {loading ? 'Scanning…' : 'Refresh'}
+        </button>
+      </div>
+
+      {ran && jobs.length === 0 && (
+        <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-8 text-center">
+          <p className="text-zinc-400 text-sm">No open roles found at your watchlist companies right now.</p>
+          <p className="text-zinc-600 text-xs mt-1">Hit Refresh to scan all sources.</p>
+        </div>
+      )}
+
+      {jobs.map(job => {
+        const ps = addedStatus.get(job.id)
+        return (
+          <JobCard
+            key={job.id}
+            job={job}
+            isSaved={savedIds.has(job.id)}
+            pipelineStatus={ps}
+            onSave={j => handleAction('save', j)}
+            onSkip={j => handleAction('skip', j)}
+            onAnalyze={onAnalyze}
+          />
+        )
+      })}
+    </div>
+  )
 }
 
 // ── Search Tab ────────────────────────────────────────────────────────────────
@@ -1723,6 +1843,17 @@ function SearchPrefsSection({ prefs, onSave }: {
         />
       </div>
 
+      {/* Watchlist companies */}
+      <div>
+        <label className="block text-xs font-semibold text-zinc-400 uppercase tracking-widest mb-1.5">Company Watchlist</label>
+        <p className="text-xs text-zinc-600 mb-2">Roles from these companies always appear — even stretch fits (score 2+) — highlighted with a watchlist badge. Good for companies you want to track even if the role isn&apos;t a perfect title match.</p>
+        <TagInput
+          tags={draft.watchlistCompanies ?? []}
+          onChange={v => set('watchlistCompanies', v)}
+          placeholder="metabase, sigma, hex — type and press Enter"
+        />
+      </div>
+
       {/* Save */}
       <div className="flex items-center gap-3 pt-1 border-t border-zinc-800">
         <button
@@ -2076,7 +2207,7 @@ function Sidebar({
 export default function Home() {
   const [profile, setProfile] = useState<Profile | null>(null)
   const [profileError, setProfileError] = useState('')
-  const [tab, setTab] = useState<'analyze' | 'search' | 'saved' | 'boards'>('analyze')
+  const [tab, setTab] = useState<'analyze' | 'search' | 'watchlist' | 'saved' | 'boards'>('analyze')
   const [selectedCompany, setSelectedCompany] = useState<string | null>(null)
   const [savedJobs, setSavedJobs] = useState<RemoteJob[]>([])
   const [appliedJobs, setAppliedJobs] = useState<RemoteJob[]>([])
@@ -2143,9 +2274,13 @@ export default function Home() {
   const defaultSearchQuery = profile?.targetRoles?.[0]?.split('/')[0]?.trim() || ''
   const pipelineCount = savedJobs.length + appliedJobs.length + activeJobs.length
 
+  const watchlistCompanies = searchPrefs.watchlistCompanies ?? []
+  const watchlistCount = newJobs.filter(j => j.watchlisted || watchlistCompanies.some(c => c.toLowerCase() === j.company_name.toLowerCase())).length
+
   const tabs = [
     { id: 'analyze' as const, label: 'Analyze Job' },
     { id: 'search' as const, label: 'Find Jobs', badge: newJobs.length > 0 ? newJobs.length : undefined },
+    { id: 'watchlist' as const, label: 'Watchlist', badge: watchlistCount > 0 ? watchlistCount : undefined, violet: true },
     { id: 'saved' as const, label: 'Pipeline', badge: pipelineCount > 0 ? pipelineCount : undefined },
     { id: 'boards' as const, label: 'Settings' },
   ]
@@ -2168,7 +2303,7 @@ export default function Home() {
             <button onClick={() => setSelectedCompany(null)}
               className="flex items-center gap-1.5 text-sm text-zinc-400 hover:text-white transition-colors">
               <IconBack />
-              Back to {tab === 'analyze' ? 'Analyze' : tab === 'search' ? 'Find Jobs' : tab === 'boards' ? 'Settings' : 'Pipeline'}
+              Back to {tab === 'analyze' ? 'Analyze' : tab === 'search' ? 'Find Jobs' : tab === 'watchlist' ? 'Watchlist' : tab === 'boards' ? 'Settings' : 'Pipeline'}
             </button>
           ) : (
             <div className="flex items-center gap-1 bg-zinc-900 border border-zinc-800 rounded-lg p-1">
@@ -2180,7 +2315,11 @@ export default function Home() {
                   {t.label}
                   {t.badge !== undefined && (
                     <span className={`text-xs px-1.5 py-0.5 rounded-full font-bold ${
-                      tab === t.id ? 'bg-zinc-600 text-zinc-300' : 'bg-blue-500/20 text-blue-400'
+                      tab === t.id
+                        ? 'bg-zinc-600 text-zinc-300'
+                        : t.violet
+                          ? 'bg-violet-500/20 text-violet-400'
+                          : 'bg-blue-500/20 text-blue-400'
                     }`}>
                       {t.badge}
                     </span>
@@ -2211,6 +2350,15 @@ export default function Home() {
           ) : (
             <div className="flex-1 min-w-0">
               {tab === 'analyze' && <AnalyzeTab savedIds={savedIds} initialUrl={analyzeUrl} onStoreChange={handleStoreChange} />}
+              {tab === 'watchlist' && (
+                <WatchlistTab
+                  watchlistCompanies={watchlistCompanies}
+                  savedIds={savedIds}
+                  addedStatus={addedStatus}
+                  onStoreChange={handleStoreChange}
+                  onAnalyze={handleAnalyzeShortcut}
+                />
+              )}
               {tab === 'search' && (
                 <SearchTab
                   defaultQuery={defaultSearchQuery}

@@ -90,6 +90,7 @@ export interface SearchPrefs {
   requireTitleKeywords: string[]      // at least one must appear in the title (empty = no requirement)
   blacklistCompanies: string[]        // never surface these companies
   dreamCompanies: string[]            // always boost these companies in ranking
+  watchlistCompanies: string[]        // always surface roles from these companies, even stretch fits
 }
 
 export const DEFAULT_SEARCH_PREFS: SearchPrefs = {
@@ -98,6 +99,7 @@ export const DEFAULT_SEARCH_PREFS: SearchPrefs = {
   requireTitleKeywords: [],
   blacklistCompanies: [],
   dreamCompanies: [],
+  watchlistCompanies: [],
 }
 
 export interface RemoteJob {
@@ -115,7 +117,8 @@ export interface RemoteJob {
   description: string
   fitScore?: number
   fitReason?: string
-  flag?: 'strong_match' | 'good_match' | 'stretch' | 'skip'
+  flag?: 'strong_match' | 'good_match' | 'stretch' | 'watchlist_stretch' | 'skip'
+  watchlisted?: boolean
   foundDate?: string
   status?: 'saved' | 'applied' | 'active' | 'archived'
 }
