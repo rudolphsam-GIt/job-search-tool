@@ -249,6 +249,8 @@ const GREENHOUSE_COMPANIES = [
   'intercom', 'asana', 'pendo', 'calendly', 'lattice', 'zuora',
   // Product analytics & data
   'amplitude', 'mixpanel', 'twilio',
+  // Analytics / BI / data platform
+  'sigmacomputing', 'fivetran', 'hightouch',
   // Marketing automation
   'braze', 'klaviyo', 'hootsuite',
   // Enterprise SaaS / identity / security
@@ -261,6 +263,7 @@ const GREENHOUSE_NAMES: Record<string, string> = {
   smartsheet: 'Smartsheet', dialpad: 'Dialpad', intercom: 'Intercom',
   asana: 'Asana', pendo: 'Pendo', calendly: 'Calendly', lattice: 'Lattice',
   zuora: 'Zuora', amplitude: 'Amplitude', mixpanel: 'Mixpanel', twilio: 'Twilio',
+  sigmacomputing: 'Sigma Computing', fivetran: 'Fivetran', hightouch: 'Hightouch',
   braze: 'Braze', klaviyo: 'Klaviyo', hootsuite: 'Hootsuite',
   stripe: 'Stripe', okta: 'Okta', five9: 'Five9',
 }
@@ -339,12 +342,15 @@ const LEVER_COMPANIES = [
   'secureframe',
   // Fintech infra / HR / recruiting SaaS
   'plaid', '15five', 'jobvite',
+  // Analytics / BI (verified live boards)
+  'metabase',
 ]
 
 const LEVER_NAMES: Record<string, string> = {
   outreach: 'Outreach', highspot: 'Highspot', mindtickle: 'MindTickle', clari: 'Clari',
   pipedrive: 'Pipedrive', aircall: 'Aircall', freshworks: 'Freshworks',
   secureframe: 'Secureframe', plaid: 'Plaid', '15five': '15Five', jobvite: 'Jobvite',
+  metabase: 'Metabase',
 }
 
 interface LeverJob {
@@ -394,11 +400,72 @@ export async function fetchLever(): Promise<RemoteJob[]> {
   return results.flat()
 }
 
+// ── Ashby ─────────────────────────────────────────────────────────────────────
+// Per-company boards via api.ashbyhq.com — used heavily by analytics/data SaaS
+// startups. Slugs verified to return live boards as of 2026-08.
+
+const ASHBY_COMPANIES: { slug: string; name: string }[] = [
+  { slug: 'hex', name: 'Hex' },
+  { slug: 'omni', name: 'Omni' },
+  { slug: 'lightdash', name: 'Lightdash' },
+  { slug: 'atlan', name: 'Atlan' },
+  { slug: 'datafold', name: 'Datafold' },
+]
+
+interface AshbyJob {
+  id: string
+  title: string
+  department?: string
+  team?: string
+  location?: string
+  isRemote?: boolean | null
+  workplaceType?: string | null
+  publishedAt?: string
+  jobUrl: string
+  descriptionHtml?: string
+}
+
+async function fetchAshbyCompany(slug: string, displayName: string, idOffset: number): Promise<RemoteJob[]> {
+  try {
+    const res = await fetch(
+      `https://api.ashbyhq.com/posting-api/job-board/${slug}`,
+      { signal: AbortSignal.timeout(8000) }
+    )
+    if (!res.ok) return []
+    const data = await res.json()
+    const jobs: AshbyJob[] = data.jobs || []
+    return jobs.map((j, i) => {
+      const isRemote = j.isRemote === true || j.workplaceType === 'Remote'
+      return {
+        id: idOffset + i,
+        url: j.jobUrl,
+        title: j.title,
+        company_name: displayName,
+        company_logo: `https://logo.clearbit.com/${slug}.com`,
+        category: (j.department || j.team || 'remote').toLowerCase(),
+        tags: [j.department, j.team].filter(Boolean) as string[],
+        job_type: 'full_time',
+        publication_date: j.publishedAt || new Date().toISOString(),
+        candidate_required_location: isRemote ? `Remote${j.location ? ` (${j.location})` : ''}` : (j.location || 'Unspecified'),
+        salary: '',
+        description: (j.descriptionHtml || '').replace(/<[^>]+>/g, '').replace(/\s+/g, ' ').trim().slice(0, 500),
+      } as RemoteJob
+    })
+  } catch { return [] }
+}
+
+export async function fetchAshby(): Promise<RemoteJob[]> {
+  const results = await Promise.all(
+    ASHBY_COMPANIES.map((c, i) => fetchAshbyCompany(c.slug, c.name, 5000000 + i * 1000))
+  )
+  return results.flat()
+}
+
 export async function fetchAllSources(): Promise<RemoteJob[]> {
-  const [remoteOK, jobicy, wwr, muse, greenhouse, saasJobs, lever] = await Promise.all([
-    fetchRemoteOK(), fetchJobicy(), fetchWWR(), fetchTheMuse(), fetchGreenhouse(), fetchTheSaaSJobs(), fetchLever(),
+  const [remoteOK, jobicy, wwr, muse, greenhouse, saasJobs, lever, ashby] = await Promise.all([
+    fetchRemoteOK(), fetchJobicy(), fetchWWR(), fetchTheMuse(), fetchGreenhouse(), fetchTheSaaSJobs(), fetchLever(), fetchAshby(),
   ])
-  return [...remoteOK, ...jobicy, ...wwr, ...muse, ...greenhouse, ...saasJobs, ...lever]
+  return [...remoteOK, ...jobicy, ...wwr, ...muse, ...greenhouse, ...saasJobs, ...lever, ...ashby]
 }
 
 /**
