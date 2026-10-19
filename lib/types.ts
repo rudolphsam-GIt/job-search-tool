@@ -13,6 +13,7 @@ export interface ActiveInterview {
   company: string      // display name, e.g. "Zoom"
   fullLabel: string   // full ### header, e.g. "Zoom — Partner Success Enablement Manager"
   status: string
+  stage: string       // normalized pipeline stage, see lib/status.ts
   nextRound?: string
 }
 
@@ -59,6 +60,9 @@ export interface CompanyDetail {
   company: string
   role: string
   status: string
+  stage: string
+  statusNote: string
+  statusUpdated?: string
   rounds: InterviewRound[]
   nextRound?: string
   concerns: Concern[]

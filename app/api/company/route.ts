@@ -3,6 +3,7 @@ import Anthropic from '@anthropic-ai/sdk'
 import fs from 'fs'
 import path from 'path'
 import { loadCoachingStateRaw, extractCompanySection } from '@/lib/coaching-state'
+import { normalizeStatus, STAGES } from '@/lib/status'
 import type { CompanyDetail, InterviewRound, InterviewerIntel, Concern } from '@/lib/types'
 
 
@@ -105,6 +106,8 @@ function parseCompanyDetail(section: string, company: string): CompanyDetail {
   const rolePart = headerLine.includes(' — ') ? headerLine.split(' — ')[1].trim() : ''
 
   const status = section.match(/^- Status: (.+)/m)?.[1]?.trim() || ''
+  const { stage, note: statusNote } = normalizeStatus(status)
+  const statusUpdated = section.match(/^- Status updated: (.+)/m)?.[1]?.trim()
   const nextRound = section.match(/^- Next round: (.+)/m)?.[1]?.trim()
   const fitAssessment = section.match(/^- Fit assessment: (.+)/m)?.[1]?.trim()
   const keySignals = section.match(/^- Key signals: (.+)/m)?.[1]?.trim()
@@ -121,6 +124,9 @@ function parseCompanyDetail(section: string, company: string): CompanyDetail {
     company: headerLine.split(' — ')[0].trim(),
     role: rolePart || section.match(/- Role: ([^\n]+)/)?.[1]?.trim() || '',
     status,
+    stage,
+    statusNote,
+    statusUpdated,
     rounds: parseRounds(section),
     nextRound,
     concerns: parseConcerns(section),
@@ -200,4 +206,32 @@ Return ONLY the updated markdown section starting with "###", nothing else.`,
 
   const detail = parseCompanyDetail(updatedSection, company)
   return NextResponse.json(detail)
+}
+
+// PATCH — set the pipeline stage from the status dropdown. Keeps any note after the dash and stamps the date.
+export async function PATCH(req: NextRequest) {
+  const company = new URL(req.url).searchParams.get('name')
+  if (!company) return NextResponse.json({ error: 'Missing company name' }, { status: 400 })
+
+  const { stage } = await req.json()
+  if (!STAGES.some(s => s.stage === stage)) return NextResponse.json({ error: `Unknown stage: ${stage}` }, { status: 400 })
+
+  const content = loadCoachingStateRaw()
+  const section = extractCompanySection(content, company)
+  if (!section) return NextResponse.json({ error: `No data found for ${company}` }, { status: 404 })
+
+  const current = section.match(/^- Status: (.+)/m)?.[1]?.trim() || ''
+  const { note } = normalizeStatus(current)
+  const statusLine = `- Status: ${stage}${note ? ` — ${note}` : ''}`
+  const dateLine = `- Status updated: ${new Date().toISOString().slice(0, 10)}`
+
+  let updated = /^- Status: .+$/m.test(section)
+    ? section.replace(/^- Status: .+$/m, statusLine)
+    : section.replace(/^(### .+)$/m, `$1\n${statusLine}`)
+  updated = /^- Status updated: .+$/m.test(updated)
+    ? updated.replace(/^- Status updated: .+$/m, dateLine)
+    : updated.replace(statusLine, `${statusLine}\n${dateLine}`)
+
+  fs.writeFileSync(getStatePath(), content.replace(section, updated), 'utf-8')
+  return NextResponse.json(parseCompanyDetail(updated, company))
 }
