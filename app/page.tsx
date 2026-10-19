@@ -5,6 +5,7 @@ import type { Profile, AnalysisResult, RemoteJob, CompanyDetail, SearchPrefs, Pr
 import { DEFAULT_SEARCH_PREFS } from '@/lib/types'
 import { PrepPanel } from './prep-panel'
 import { STAGES, stageInfo, isClosedStage } from '@/lib/status'
+import { sameCompany } from '@/lib/company-match'
 
 // ── Icons ─────────────────────────────────────────────────────────────────────
 
@@ -971,7 +972,7 @@ function AnalyzeTab({ savedIds, initialUrl, onStoreChange }: {
 
 // ── Shared job action hook ────────────────────────────────────────────────────
 
-type StoreUpdate = { saved: RemoteJob[]; applied?: RemoteJob[]; active?: RemoteJob[]; archived?: RemoteJob[]; newJobs: RemoteJob[] }
+type StoreUpdate = { saved: RemoteJob[]; applied?: RemoteJob[]; active?: RemoteJob[]; archived?: RemoteJob[]; newJobs: RemoteJob[]; loopsChanged?: boolean }
 
 function useJobActions(onStoreChange: (store: StoreUpdate) => void) {
   const act = useCallback(async (action: string, job: RemoteJob, extra?: Record<string, unknown>) => {
@@ -1374,7 +1375,7 @@ function SearchTab({
 const STATUS_OPTIONS: { value: RemoteJob['status']; label: string }[] = [
   { value: 'saved', label: 'Saved' },
   { value: 'applied', label: 'Applied — Pending' },
-  { value: 'active', label: 'Active — In Process' },
+  { value: 'active', label: 'Interviewing' },
   { value: 'archived', label: 'Archived' },
 ]
 
@@ -1382,10 +1383,12 @@ function PipelineCard({
   job,
   currentStatus,
   onSetStatus,
+  onOpen,
 }: {
   job: RemoteJob & { savedAt?: string }
   currentStatus: RemoteJob['status']
   onSetStatus: (job: RemoteJob, status: RemoteJob['status']) => void
+  onOpen?: () => void
 }) {
   const [expandFit, setExpandFit] = useState(false)
   const statusColor = currentStatus === 'active' ? 'text-emerald-400 border-emerald-500/40 bg-emerald-500/10'
@@ -1448,6 +1451,12 @@ function PipelineCard({
               <option key={o.value} value={o.value} className="bg-zinc-900 text-zinc-300">{o.label}</option>
             ))}
           </select>
+          {onOpen && (
+            <button onClick={onOpen}
+              className="ml-2 text-xs font-semibold text-blue-400 hover:text-blue-300 border border-blue-500/30 hover:border-blue-500/50 px-2.5 py-1.5 rounded-lg transition-colors">
+              Open prep →
+            </button>
+          )}
         </div>
       </div>
     </div>
@@ -1462,12 +1471,16 @@ function SavedTab({
   active,
   archived,
   onStoreChange,
+  findLoop,
+  onOpenCompany,
 }: {
   saved: RemoteJob[]
   applied: RemoteJob[]
   active: RemoteJob[]
   archived: RemoteJob[]
   onStoreChange: (store: StoreUpdate) => void
+  findLoop: (companyName: string) => string | undefined
+  onOpenCompany: (loopLabel: string) => void
 }) {
   const { setStatus } = useJobActions(onStoreChange)
   const [showArchived, setShowArchived] = useState(false)
@@ -1485,10 +1498,11 @@ function SavedTab({
   }
 
   type Section = { status: RemoteJob['status']; jobs: RemoteJob[]; label: string; sublabel: string; labelCls: string }
+  // Furthest along first
   const sections: Section[] = [
+    { status: 'active', jobs: active, label: 'Interviewing', sublabel: 'open one to prep or change its status', labelCls: 'text-emerald-400' },
+    { status: 'applied', jobs: applied, label: 'Applied', sublabel: 'waiting to hear back', labelCls: 'text-amber-400' },
     { status: 'saved', jobs: saved, label: 'Saved', sublabel: 'haven\'t applied yet', labelCls: 'text-zinc-400' },
-    { status: 'applied', jobs: applied, label: 'Applied — Pending', sublabel: 'waiting to hear back', labelCls: 'text-amber-400' },
-    { status: 'active', jobs: active, label: 'Active — In Process', sublabel: 'in interview process', labelCls: 'text-emerald-400' },
   ]
 
   return (
@@ -1502,7 +1516,8 @@ function SavedTab({
           </div>
           <div className="space-y-3">
             {s.jobs.map(job => (
-              <PipelineCard key={job.id} job={job} currentStatus={s.status} onSetStatus={setStatus} />
+              <PipelineCard key={job.id} job={job} currentStatus={s.status} onSetStatus={setStatus}
+                onOpen={s.status === 'active' && findLoop(job.company_name) ? () => onOpenCompany(findLoop(job.company_name)!) : undefined} />
             ))}
           </div>
         </div>
@@ -2109,142 +2124,82 @@ function Sidebar({
   const order = (stage: string) => STAGES.findIndex(s => s.stage === stage)
   const activeInterviews = profile.activeInterviews.filter(i => !isClosedStage(i.stage)).sort((a, b) => order(b.stage) - order(a.stage))
   const closedInterviews = profile.activeInterviews.filter(i => isClosedStage(i.stage))
+  const [showApplied, setShowApplied] = useState(false)
   const [showClosed, setShowClosed] = useState(false)
 
+  const loopButton = (i: Profile['activeInterviews'][number], muted = false) => (
+    <button
+      key={i.fullLabel}
+      onClick={() => onSelectCompany(selectedCompany === i.fullLabel ? null : i.fullLabel)}
+      className={`w-full text-left rounded-lg px-3 py-2 transition-colors group border ${
+        selectedCompany === i.fullLabel ? 'bg-blue-500/15 border-blue-500/30' : 'hover:bg-zinc-800 border-transparent'
+      }`}
+    >
+      <div className="flex items-center justify-between gap-2">
+        <span className={`text-sm truncate ${muted ? 'text-zinc-500' : 'font-medium text-white group-hover:text-blue-200'} transition-colors`}>
+          {i.company}
+        </span>
+        <StatusBadge stage={i.stage} />
+      </div>
+      {!muted && i.nextRound && <p className="text-xs text-zinc-500 truncate mt-0.5">{i.nextRound}</p>}
+    </button>
+  )
+
+  const sectionToggle = (label: string, count: number, open: boolean, toggle: () => void, cls: string) => (
+    <button onClick={toggle}
+      className={`w-full flex items-center justify-between px-1 py-1.5 text-xs font-semibold uppercase tracking-widest hover:text-zinc-300 transition-colors ${cls}`}>
+      <span>{label} <span className="text-zinc-600 font-normal">{count}</span></span>
+      <span className={`transition-transform ${open ? 'rotate-180' : ''}`}><IconChevronDown /></span>
+    </button>
+  )
+
   return (
-    <aside className="w-64 shrink-0 space-y-3">
-      {/* Profile card */}
-      <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-4">
-        <div className="flex items-center gap-3 mb-4">
-          <div className="w-10 h-10 rounded-full bg-gradient-to-br from-blue-500 to-violet-600 flex items-center justify-center text-white font-bold text-base shrink-0">
-            {profile.name.charAt(0)}
-          </div>
-          <div className="min-w-0">
-            <p className="font-semibold text-white text-sm leading-tight">{profile.name}</p>
-            <p className="text-xs text-zinc-500">{profile.seniorityBand}</p>
-          </div>
+    <aside className="w-60 shrink-0 bg-zinc-900 border border-zinc-800 rounded-xl p-3 space-y-3 sticky top-20 max-h-[calc(100vh-6rem)] overflow-y-auto">
+      <div className="flex items-center gap-2.5 px-1">
+        <div className="w-8 h-8 rounded-full bg-gradient-to-br from-blue-500 to-violet-600 flex items-center justify-center text-white font-bold text-sm shrink-0">
+          {profile.name.charAt(0)}
         </div>
-        <div className="space-y-1.5 mb-3">
-          {profile.targetRoles.map(r => (
-            <div key={r} className="text-xs bg-blue-500/10 border border-blue-500/20 text-blue-300 px-2.5 py-1 rounded-lg font-medium truncate">{r}</div>
-          ))}
-        </div>
-        <div className="flex items-center gap-1.5 text-xs text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-2.5 py-1 rounded-lg">
-          <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 shrink-0" />
-          Remote only
+        <div className="min-w-0">
+          <p className="font-semibold text-white text-sm leading-tight truncate">{profile.name}</p>
+          <p className="text-xs text-zinc-500 truncate">{profile.seniorityBand}</p>
         </div>
       </div>
 
-      {/* Active interviews — clickable */}
-      {activeInterviews.length > 0 && (
-        <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-4">
-          <p className="text-xs font-semibold text-zinc-500 uppercase tracking-widest mb-3">Active</p>
-          <div className="space-y-1">
-            {activeInterviews.map(i => (
-              <button
-                key={i.fullLabel}
-                onClick={() => onSelectCompany(selectedCompany === i.fullLabel ? null : i.fullLabel)}
-                className={`w-full text-left rounded-lg px-3 py-2.5 transition-colors group ${
-                  selectedCompany === i.fullLabel
-                    ? 'bg-blue-500/15 border border-blue-500/30'
-                    : 'hover:bg-zinc-800 border border-transparent'
-                }`}
-              >
-                <div className="flex items-center justify-between gap-2 mb-0.5">
-                  <span className={`text-sm font-medium truncate ${selectedCompany === i.fullLabel ? 'text-blue-200' : 'text-white group-hover:text-blue-200'} transition-colors`}>
-                    {i.company}
-                  </span>
-                  <StatusBadge stage={i.stage} />
-                </div>
-                {i.nextRound && (
-                  <p className="text-xs text-zinc-500 truncate">{i.nextRound}</p>
-                )}
-              </button>
-            ))}
-          </div>
-        </div>
-      )}
+      <div className="border-t border-zinc-800 pt-3">
+        <p className="px-1 pb-1.5 text-xs font-semibold text-emerald-400 uppercase tracking-widest">
+          Active <span className="text-zinc-600 font-normal">{activeInterviews.length}</span>
+        </p>
+        {activeInterviews.length > 0 ? (
+          <div className="space-y-0.5">{activeInterviews.map(i => loopButton(i))}</div>
+        ) : (
+          <p className="px-1 text-xs text-zinc-600">Move a Pipeline job to Interviewing and it shows up here.</p>
+        )}
+      </div>
 
-      {/* Applied — pending */}
       {appliedJobs.length > 0 && (
-        <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-4">
-          <p className="text-xs font-semibold text-amber-500/80 uppercase tracking-widest mb-3">Applied</p>
-          <div className="space-y-1">
-            {appliedJobs.map(job => (
-              <a
-                key={job.id}
-                href={job.url}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="flex items-center justify-between gap-2 px-3 py-2 rounded-lg hover:bg-zinc-800 transition-colors group"
-              >
-                <div className="min-w-0">
-                  <p className="text-sm text-white truncate group-hover:text-amber-200 transition-colors">{job.company_name}</p>
-                  <p className="text-xs text-zinc-500 truncate">{job.title}</p>
-                </div>
-                <span className="shrink-0 text-zinc-700 group-hover:text-zinc-500 transition-colors"><IconExternal /></span>
-              </a>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {/* Closed — collapsible */}
-      {closedInterviews.length > 0 && (
-        <div className="bg-zinc-900 border border-zinc-800 rounded-xl overflow-hidden">
-          <button
-            onClick={() => setShowClosed(v => !v)}
-            className="w-full flex items-center justify-between px-4 py-3 text-xs font-semibold text-zinc-500 uppercase tracking-widest hover:text-zinc-400 transition-colors"
-          >
-            Closed ({closedInterviews.length})
-            <span className={`transition-transform ${showClosed ? 'rotate-180' : ''}`}><IconChevronDown /></span>
-          </button>
-          {showClosed && (
-            <div className="px-4 pb-4 space-y-1 border-t border-zinc-800 pt-3">
-              {closedInterviews.map(i => (
-                <button
-                  key={i.fullLabel}
-                  onClick={() => onSelectCompany(selectedCompany === i.fullLabel ? null : i.fullLabel)}
-                  className={`w-full text-left rounded-lg px-3 py-2 transition-colors ${
-                    selectedCompany === i.fullLabel ? 'bg-zinc-800' : 'hover:bg-zinc-800'
-                  }`}
-                >
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="text-sm text-zinc-500 truncate">{i.company}</span>
-                    <StatusBadge stage={i.stage} />
+        <div className="border-t border-zinc-800 pt-2">
+          {sectionToggle('Applied', appliedJobs.length, showApplied, () => setShowApplied(v => !v), 'text-amber-500/80')}
+          {showApplied && (
+            <div className="space-y-0.5 mt-1">
+              {appliedJobs.map(job => (
+                <a key={job.id} href={job.url} target="_blank" rel="noopener noreferrer"
+                  className="flex items-center justify-between gap-2 px-3 py-1.5 rounded-lg hover:bg-zinc-800 transition-colors group">
+                  <div className="min-w-0">
+                    <p className="text-sm text-zinc-300 truncate group-hover:text-amber-200 transition-colors">{job.company_name}</p>
+                    <p className="text-xs text-zinc-600 truncate">{job.title}</p>
                   </div>
-                </button>
+                  <span className="shrink-0 text-zinc-700 group-hover:text-zinc-500 transition-colors"><IconExternal /></span>
+                </a>
               ))}
             </div>
           )}
         </div>
       )}
 
-      {/* Strengths */}
-      {profile.strengths.length > 0 && (
-        <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-4">
-          <p className="text-xs font-semibold text-zinc-500 uppercase tracking-widest mb-3">Strengths</p>
-          <ul className="space-y-2">
-            {profile.strengths.map(s => (
-              <li key={s} className="flex gap-2 text-xs text-zinc-300 leading-relaxed">
-                <span className="text-emerald-400 shrink-0 mt-0.5">✓</span>
-                <span>{s}</span>
-              </li>
-            ))}
-          </ul>
-        </div>
-      )}
-
-      {/* Connection anchors */}
-      {profile.pastEmployers.length > 0 && (
-        <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-4">
-          <p className="text-xs font-semibold text-zinc-500 uppercase tracking-widest mb-1.5">Connection Anchors</p>
-          <p className="text-xs text-zinc-600 mb-2">LinkedIn surfaces shared connections via:</p>
-          <div className="flex flex-wrap gap-1.5">
-            {profile.pastEmployers.map(e => (
-              <span key={e} className="text-xs bg-zinc-800 border border-zinc-700 text-zinc-300 px-2 py-0.5 rounded-full">{e}</span>
-            ))}
-          </div>
+      {closedInterviews.length > 0 && (
+        <div className="border-t border-zinc-800 pt-2">
+          {sectionToggle('Closed', closedInterviews.length, showClosed, () => setShowClosed(v => !v), 'text-zinc-500')}
+          {showClosed && <div className="space-y-0.5 mt-1">{closedInterviews.map(i => loopButton(i, true))}</div>}
         </div>
       )}
     </aside>
@@ -2289,9 +2244,7 @@ export default function Home() {
     loadProfile()
   }, [loadProfile])
 
-  useEffect(() => {
-    loadProfile()
-    // Load saved jobs on mount
+  const loadStore = useCallback(() => {
     fetch('/api/jobs-store').then(r => r.json()).then(store => {
       setSavedJobs(store.saved || [])
       setAppliedJobs(store.applied || [])
@@ -2302,7 +2255,22 @@ export default function Home() {
       setSearchPrefs({ ...DEFAULT_SEARCH_PREFS, ...(store.searchPrefs || {}) })
       setProfileOverrides(store.profileOverrides || {})
     })
-  }, [loadProfile])
+  }, [])
+
+  useEffect(() => {
+    loadProfile()
+    loadStore()
+  }, [loadProfile, loadStore])
+
+  // A status change on a company page can move Pipeline jobs too, so refresh both trackers
+  const reloadAll = useCallback(() => {
+    loadProfile()
+    loadStore()
+  }, [loadProfile, loadStore])
+
+  const findLoop = useCallback((companyName: string) =>
+    profile?.activeInterviews.find(i => sameCompany(i.company, companyName))?.fullLabel
+  , [profile])
 
   const handleStoreChange = useCallback((store: StoreUpdate) => {
     if (store.saved) setSavedJobs(store.saved)
@@ -2310,7 +2278,9 @@ export default function Home() {
     if (store.active) setActiveJobs(store.active)
     if (store.archived) setArchivedJobs(store.archived)
     if (store.newJobs) setNewJobs(store.newJobs)
-  }, [])
+    // Moving a job to Interviewing creates its loop in coaching_state.md
+    if (store.loopsChanged) loadProfile()
+  }, [loadProfile])
 
   const savedIds = new Set(savedJobs.map(j => j.id))
   const newJobIds = new Set(newJobs.map(j => j.id))
@@ -2395,7 +2365,7 @@ export default function Home() {
           )}
 
           {selectedCompany ? (
-            <CompanyDetailPanel company={selectedCompany} onBack={() => setSelectedCompany(null)} onProfileRefresh={loadProfile} />
+            <CompanyDetailPanel company={selectedCompany} onBack={() => setSelectedCompany(null)} onProfileRefresh={reloadAll} />
           ) : (
             <div className="flex-1 min-w-0">
               {tab === 'analyze' && <AnalyzeTab savedIds={savedIds} initialUrl={analyzeUrl} onStoreChange={handleStoreChange} />}
@@ -2425,6 +2395,8 @@ export default function Home() {
                   active={activeJobs}
                   archived={archivedJobs}
                   onStoreChange={handleStoreChange}
+                  findLoop={findLoop}
+                  onOpenCompany={setSelectedCompany}
                 />
               )}
               {tab === 'boards' && (

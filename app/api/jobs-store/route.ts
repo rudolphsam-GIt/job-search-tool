@@ -3,6 +3,7 @@ import fs from 'fs'
 import path from 'path'
 import type { RemoteJob, SearchPrefs, ProfileOverrides } from '@/lib/types'
 import { DEFAULT_SEARCH_PREFS } from '@/lib/types'
+import { ensureLoop } from '@/lib/pipeline-sync'
 
 const STORE_PATH = path.join(process.cwd(), 'data', 'jobs-store.json')
 
@@ -54,6 +55,7 @@ export async function GET() {
 export async function POST(req: NextRequest) {
   const { action, job, newStatus, slug, name, prefs, profileOverrides } = await req.json()
   const store = readStore()
+  let loopsChanged = false
   const today = new Date().toISOString().slice(0, 10)
 
   if (action === 'save' && job) {
@@ -83,7 +85,7 @@ export async function POST(req: NextRequest) {
       const updated = { ...job, status: newStatus as RemoteJob['status'] }
       if (newStatus === 'saved') store.saved.unshift(updated)
       else if (newStatus === 'applied') store.applied.unshift(updated)
-      else if (newStatus === 'active') store.active.unshift(updated)
+      else if (newStatus === 'active') { store.active.unshift(updated); loopsChanged = ensureLoop(updated) }
       else if (newStatus === 'archived') store.archived.unshift(updated)
     }
   }
@@ -111,5 +113,5 @@ export async function POST(req: NextRequest) {
   }
 
   writeStore(store)
-  return NextResponse.json(store)
+  return NextResponse.json({ ...store, loopsChanged })
 }

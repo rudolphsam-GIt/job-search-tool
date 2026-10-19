@@ -3,11 +3,14 @@ import path from 'path'
 import type { Profile, ActiveInterview } from './types'
 import { normalizeStatus } from './status'
 
-export function loadCoachingStateRaw(): string {
-  const stateFilePath = process.env.COACHING_STATE_PATH ||
+export function getStatePath(): string {
+  return process.env.COACHING_STATE_PATH ||
     path.join(process.cwd(), '..', 'interview-coach-skill-main', 'coaching_state.md')
+}
+
+export function loadCoachingStateRaw(): string {
   try {
-    return fs.readFileSync(stateFilePath, 'utf-8')
+    return fs.readFileSync(getStatePath(), 'utf-8')
   } catch {
     return ''
   }
