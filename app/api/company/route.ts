@@ -2,17 +2,11 @@ import { NextRequest, NextResponse } from 'next/server'
 import Anthropic from '@anthropic-ai/sdk'
 import fs from 'fs'
 import path from 'path'
-import { loadCoachingStateRaw, extractCompanySection } from '@/lib/coaching-state'
+import { loadCoachingStateRaw, extractCompanySection, getStatePath } from '@/lib/coaching-state'
+import { syncPipelineToStage } from '@/lib/pipeline-sync'
 import { normalizeStatus, STAGES } from '@/lib/status'
 import type { CompanyDetail, InterviewRound, InterviewerIntel, Concern } from '@/lib/types'
 
-
-function getStatePath() {
-  return (
-    process.env.COACHING_STATE_PATH ||
-    path.join(process.cwd(), '..', 'interview-coach-skill-main', 'coaching_state.md')
-  )
-}
 
 function parseRounds(section: string): InterviewRound[] {
   const rounds: InterviewRound[] = []
@@ -233,5 +227,6 @@ export async function PATCH(req: NextRequest) {
     : updated.replace(statusLine, `${statusLine}\n${dateLine}`)
 
   fs.writeFileSync(getStatePath(), content.replace(section, updated), 'utf-8')
+  syncPipelineToStage(company.split(' — ')[0], stage)
   return NextResponse.json(parseCompanyDetail(updated, company))
 }
