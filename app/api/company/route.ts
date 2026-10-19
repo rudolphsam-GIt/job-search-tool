@@ -5,7 +5,7 @@ import path from 'path'
 import { loadCoachingStateRaw, extractCompanySection, getStatePath } from '@/lib/coaching-state'
 import { syncPipelineToStage } from '@/lib/pipeline-sync'
 import { normalizeStatus, STAGES } from '@/lib/status'
-import type { CompanyDetail, InterviewRound, InterviewerIntel, Concern } from '@/lib/types'
+import type { CompanyDetail, InterviewRound, InterviewerIntel, Concern, RoundItem, StepItem } from '@/lib/types'
 
 
 function parseRounds(section: string): InterviewRound[] {
@@ -95,6 +95,69 @@ function parseListField(section: string, field: string): string[] {
     .filter(Boolean)
 }
 
+
+// ── Checklist fields ("- Rounds:" and "- Next steps:") ──────────────────────
+
+function parseChecklist(section: string, field: string): { text: string; done: boolean }[] | null {
+  const lines = section.split('\n')
+  const i = lines.findIndex(l => l.startsWith(`- ${field}:`))
+  if (i < 0) return null
+  const items: { text: string; done: boolean }[] = []
+  for (let j = i + 1; j < lines.length && /^\s+-/.test(lines[j]); j++) {
+    const m = lines[j].match(/^\s+- \[( |x|X)\]\s*(.*)$/)
+    if (m) items.push({ done: m[1] !== ' ', text: m[2].trim() })
+  }
+  return items
+}
+
+// Replace a "- Field:" line and its indented children, or add it after the status lines
+function setListField(section: string, field: string, children: string[]): string {
+  const lines = section.split('\n')
+  const block = [`- ${field}:`, ...children.map(c => `  - ${c}`)]
+  const i = lines.findIndex(l => l.startsWith(`- ${field}:`))
+  if (i >= 0) {
+    let j = i + 1
+    while (j < lines.length && /^\s+-/.test(lines[j])) j++
+    lines.splice(i, j - i, ...block)
+  } else {
+    let at = lines.findIndex(l => l.startsWith('- Status updated:'))
+    if (at < 0) at = lines.findIndex(l => l.startsWith('- Status:'))
+    lines.splice(at < 0 ? 1 : at + 1, 0, ...block)
+  }
+  return lines.join('\n')
+}
+
+function setScalarField(section: string, field: string, value: string): string {
+  const re = new RegExp(`^- ${field}: .*$`, 'm')
+  return re.test(section) ? section.replace(re, `- ${field}: ${value}`) : `${section.trimEnd()}\n- ${field}: ${value}`
+}
+
+function parseRoundItems(section: string): RoundItem[] {
+  const stored = parseChecklist(section, 'Rounds')
+  if (stored) {
+    return stored.map(({ text, done }) => {
+      const [name = '', date = '', who = ''] = text.split(' | ').map(s => s.trim())
+      return { name, date, who, done }
+    })
+  }
+  // Older loops only have free text "Round formats", so show those until the first edit
+  return parseRounds(section).map(r => ({
+    name: `${r.label}: ${r.description}`, date: '', who: '', done: r.status === 'completed',
+  }))
+}
+
+// First job posting link in the section, skipping people profiles
+function findPostingUrl(section: string): string | undefined {
+  const urls = section.match(/(?:https?:\/\/)?(?:[a-z0-9-]+\.)+[a-z]{2,}\/[^\s)\],]+/gi) || []
+  const url = urls.find(u => !/linkedin\.com|zoominfo\.com/i.test(u) && /job|career|lever|greenhouse|ashby|workday|posting/i.test(u))
+  if (!url) return undefined
+  return /^https?:\/\//.test(url) ? url.replace(/[.;]$/, '') : `https://${url.replace(/[.;]$/, '')}`
+}
+
+function describeRound(r: RoundItem) {
+  return [r.date, r.name, r.who && `with ${r.who}`].filter(Boolean).join(' · ')
+}
+
 function parseCompanyDetail(section: string, company: string): CompanyDetail {
   const headerLine = section.match(/^### (.+)/m)?.[1] || company
   const rolePart = headerLine.includes(' — ') ? headerLine.split(' — ')[1].trim() : ''
@@ -122,6 +185,9 @@ function parseCompanyDetail(section: string, company: string): CompanyDetail {
     statusNote,
     statusUpdated,
     rounds: parseRounds(section),
+    roundItems: parseRoundItems(section),
+    nextSteps: (parseChecklist(section, 'Next steps') || []) as StepItem[],
+    postingUrl: findPostingUrl(section),
     nextRound,
     concerns: parseConcerns(section),
     questions: parseQuestions(section),
@@ -207,26 +273,45 @@ export async function PATCH(req: NextRequest) {
   const company = new URL(req.url).searchParams.get('name')
   if (!company) return NextResponse.json({ error: 'Missing company name' }, { status: 400 })
 
-  const { stage } = await req.json()
-  if (!STAGES.some(s => s.stage === stage)) return NextResponse.json({ error: `Unknown stage: ${stage}` }, { status: 400 })
+  const body = await req.json() as { stage?: string; rounds?: RoundItem[]; nextSteps?: StepItem[] }
+  if (body.stage && !STAGES.some(s => s.stage === body.stage)) {
+    return NextResponse.json({ error: `Unknown stage: ${body.stage}` }, { status: 400 })
+  }
 
   const content = loadCoachingStateRaw()
   const section = extractCompanySection(content, company)
   if (!section) return NextResponse.json({ error: `No data found for ${company}` }, { status: 404 })
 
-  const current = section.match(/^- Status: (.+)/m)?.[1]?.trim() || ''
-  const { note } = normalizeStatus(current)
-  const statusLine = `- Status: ${stage}${note ? ` — ${note}` : ''}`
-  const dateLine = `- Status updated: ${new Date().toISOString().slice(0, 10)}`
+  let updated = section
+  const today = new Date().toISOString().slice(0, 10)
 
-  let updated = /^- Status: .+$/m.test(section)
-    ? section.replace(/^- Status: .+$/m, statusLine)
-    : section.replace(/^(### .+)$/m, `$1\n${statusLine}`)
-  updated = /^- Status updated: .+$/m.test(updated)
-    ? updated.replace(/^- Status updated: .+$/m, dateLine)
-    : updated.replace(statusLine, `${statusLine}\n${dateLine}`)
+  if (body.stage) {
+    const current = section.match(/^- Status: (.+)/m)?.[1]?.trim() || ''
+    const { note } = normalizeStatus(current)
+    const statusLine = `- Status: ${body.stage}${note ? ` — ${note}` : ''}`
+    updated = /^- Status: .+$/m.test(updated)
+      ? updated.replace(/^- Status: .+$/m, statusLine)
+      : updated.replace(/^(### .+)$/m, `$1\n${statusLine}`)
+    updated = /^- Status updated: .+$/m.test(updated)
+      ? updated.replace(/^- Status updated: .+$/m, `- Status updated: ${today}`)
+      : updated.replace(statusLine, `${statusLine}\n- Status updated: ${today}`)
+  }
+
+  if (body.rounds) {
+    const clean = (t: string) => t.replace(/\|/g, '/').replace(/\n/g, ' ').trim()
+    updated = setListField(updated, 'Rounds', body.rounds.map(r =>
+      `[${r.done ? 'x' : ' '}] ${[clean(r.name), clean(r.date), clean(r.who)].join(' | ')}`))
+    // Keep "Next round" (read by the sidebar and the interview coach) pointing at the first open round
+    const next = body.rounds.find(r => !r.done)
+    updated = setScalarField(updated, 'Next round', next ? describeRound(next) : 'None scheduled')
+  }
+
+  if (body.nextSteps) {
+    updated = setListField(updated, 'Next steps', body.nextSteps.map(st =>
+      `[${st.done ? 'x' : ' '}] ${st.text.replace(/\n/g, ' ').trim()}`))
+  }
 
   fs.writeFileSync(getStatePath(), content.replace(section, updated), 'utf-8')
-  syncPipelineToStage(company.split(' — ')[0], stage)
+  if (body.stage) syncPipelineToStage(company.split(' — ')[0], body.stage)
   return NextResponse.json(parseCompanyDetail(updated, company))
 }

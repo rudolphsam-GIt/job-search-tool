@@ -45,6 +45,20 @@ export interface InterviewRound {
   status: 'completed' | 'next' | 'upcoming'
 }
 
+// One interview round, stored in coaching_state.md as "  - [x] Name | date | interviewer"
+export interface RoundItem {
+  name: string
+  date: string
+  who: string
+  done: boolean
+}
+
+// One next step, stored as "  - [ ] text"
+export interface StepItem {
+  text: string
+  done: boolean
+}
+
 export interface InterviewerIntel {
   name: string
   linkedin?: string
@@ -64,6 +78,9 @@ export interface CompanyDetail {
   statusNote: string
   statusUpdated?: string
   rounds: InterviewRound[]
+  roundItems: RoundItem[]       // editable rounds; falls back to legacy Round formats
+  nextSteps: StepItem[]
+  postingUrl?: string
   nextRound?: string
   concerns: Concern[]
   questions: string[]
