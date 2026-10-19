@@ -180,3 +180,78 @@ export interface PrepResult {
   sources: { title: string; url: string }[]
   generatedAt: string
 }
+
+export interface BriefingItem {
+  headline: string
+  date: string
+  category: 'earnings' | 'funding' | 'leadership' | 'product' | 'layoffs' | 'strategy' | 'partnership' | 'other'
+  summary: string
+  soWhat: string        // why it matters for this role and this candidate
+  howToUse: string      // a line the candidate could actually say in the interview
+  sourceUrl: string
+  isNew?: boolean       // set server side when the headline wasn't in the previous briefing
+}
+
+export interface Briefing {
+  snapshot: string
+  items: BriefingItem[]
+  talkingPoints: string[]
+  watchOuts: string[]
+  questionsFromNews: string[]
+}
+
+export interface BriefingResult {
+  company: string
+  briefing: Briefing
+  sources: { title: string; url: string }[]
+  generatedAt: string
+  previousGeneratedAt?: string
+}
+
+export interface InterviewerDossier {
+  summary: string
+  title: string
+  identityConfidence: 'high' | 'medium' | 'low'   // how sure we are this is the right person
+  identityBasis: string
+  careerPath: string[]
+  publicActivity: { what: string; date: string; url: string }[]
+  likelyFocus: string[]
+  sharedBackground: string[]
+  rapportHooks: string[]
+  questionsForThem: string[]
+  avoid: string[]
+}
+
+export interface InterviewerResult {
+  company: string
+  name: string
+  dossier: InterviewerDossier
+  sources: { title: string; url: string }[]
+  generatedAt: string
+}
+
+export interface DebriefInput {
+  company: string
+  round: RoundItem
+  interviewers: string[]
+  feel: 'great' | 'good' | 'mixed' | 'rough'
+  questions: string
+  signals: string
+  redo: string
+  draftNotes: boolean
+}
+
+export interface ThankYouNote {
+  to: string
+  subject: string
+  body: string
+}
+
+export interface DebriefResult {
+  input: DebriefInput
+  summary: string
+  followUps: string[]
+  storyNotes: string[]       // which stories landed or were missing, for the coach
+  thankYouNotes: ThankYouNote[]
+  createdAt: string
+}

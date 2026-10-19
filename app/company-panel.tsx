@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect, useCallback } from 'react'
-import type { CompanyDetail, RoundItem, StepItem } from '@/lib/types'
+import type { CompanyDetail, RoundItem, StepItem, BriefingResult, InterviewerResult, DebriefInput, DebriefResult } from '@/lib/types'
 import { isClosedStage } from '@/lib/status'
 import { PrepPanel } from './prep-panel'
 import { Spinner, IconChevronDown, IconExternal, IconLinkedIn, StatusSelect, SeverityDot } from './ui'
@@ -58,7 +58,12 @@ function describeRound(r: RoundItem) {
 
 // ── Interview process ─────────────────────────────────────────────────────────
 
-function RoundsCard({ rounds, closed, onSave }: { rounds: RoundItem[]; closed: boolean; onSave: (r: RoundItem[]) => void }) {
+function RoundsCard({ rounds, closed, onSave, onCompleted }: {
+  rounds: RoundItem[]
+  closed: boolean
+  onSave: (r: RoundItem[]) => void
+  onCompleted: (r: RoundItem) => void
+}) {
   const [adding, setAdding] = useState(false)
   const [draft, setDraft] = useState<RoundItem>({ name: '', date: '', who: '', done: false })
   const nextIndex = closed ? -1 : rounds.findIndex(r => !r.done)
@@ -88,7 +93,10 @@ function RoundsCard({ rounds, closed, onSave }: { rounds: RoundItem[]; closed: b
             <li key={i} className="group flex gap-3">
               <div className="flex flex-col items-center pt-0.5">
                 <CheckButton done={r.done} label={r.done ? 'Mark round not done' : 'Mark round done'}
-                  onClick={() => onSave(rounds.map((x, j) => j === i ? { ...x, done: !x.done } : x))} />
+                  onClick={() => {
+                    onSave(rounds.map((x, j) => j === i ? { ...x, done: !x.done } : x))
+                    if (!r.done) onCompleted({ ...r, done: true })
+                  }} />
                 {i < rounds.length - 1 && <div className={`w-0.5 flex-1 min-h-3 my-1 ${r.done ? 'bg-emerald-500/40' : 'bg-zinc-800'}`} />}
               </div>
               <div className="flex-1 min-w-0 pb-4">
@@ -199,25 +207,204 @@ function NextStepsCard({ steps, stage, company, onSave }: {
   )
 }
 
+// ── Company briefing ──────────────────────────────────────────────────────────
+
+const CATEGORY_CLS: Record<string, string> = {
+  earnings: 'text-emerald-300 bg-emerald-500/10 border-emerald-500/30',
+  funding: 'text-emerald-300 bg-emerald-500/10 border-emerald-500/30',
+  leadership: 'text-violet-300 bg-violet-500/10 border-violet-500/30',
+  product: 'text-blue-300 bg-blue-500/10 border-blue-500/30',
+  layoffs: 'text-red-300 bg-red-500/10 border-red-500/30',
+  strategy: 'text-amber-300 bg-amber-500/10 border-amber-500/30',
+  partnership: 'text-sky-300 bg-sky-500/10 border-sky-500/30',
+  other: 'text-zinc-400 bg-zinc-800 border-zinc-700',
+}
+
+function BriefingCard({ company }: { company: string }) {
+  const [result, setResult] = useState<BriefingResult | null>(null)
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState('')
+  const [showAll, setShowAll] = useState(false)
+
+  useEffect(() => {
+    fetch(`/api/briefing?name=${encodeURIComponent(company)}`).then(r => r.json()).then(setResult).catch(() => {})
+  }, [company])
+
+  const refresh = async () => {
+    setLoading(true); setError('')
+    try {
+      const res = await fetch('/api/briefing', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ company }),
+      })
+      const data = await res.json()
+      if (!res.ok) { setError(data.error || 'Briefing failed'); return }
+      setResult(data)
+    } catch { setError('Network error') }
+    finally { setLoading(false) }
+  }
+
+  const b = result?.briefing
+  const items = b ? (showAll ? b.items : b.items.slice(0, 4)) : []
+  const newCount = b?.items.filter(i => i.isNew).length || 0
+
+  return (
+    <Card title="Company Briefing" accent="text-sky-400"
+      action={
+        <button onClick={refresh} disabled={loading}
+          className="flex items-center gap-1.5 text-xs font-semibold text-sky-400 hover:text-sky-300 disabled:opacity-50">
+          {loading ? <><Spinner /> Researching…</> : result ? 'Refresh' : 'Build briefing'}
+        </button>
+      }>
+      {error && <p className="text-sm text-red-400 mb-2">{error}</p>}
+      {!b && !loading && (
+        <p className="text-sm text-zinc-500">
+          Pulls recent news, earnings, leadership changes and launches, then tells you what each one means for this interview and how to bring it up. Takes a minute or two.
+        </p>
+      )}
+      {!b && loading && <p className="text-sm text-zinc-500">Reading recent coverage of {company.split(' — ')[0]}…</p>}
+
+      {b && (
+        <div className="space-y-4">
+          <div>
+            <p className="text-sm text-zinc-200 leading-relaxed">{b.snapshot}</p>
+            <p className="text-xs text-zinc-600 mt-1">
+              Updated {new Date(result!.generatedAt).toLocaleDateString()}
+              {newCount > 0 && <span className="text-sky-400"> · {newCount} new since {new Date(result!.previousGeneratedAt!).toLocaleDateString()}</span>}
+            </p>
+          </div>
+
+          <ul className="space-y-3">
+            {items.map((it, i) => (
+              <li key={i} className="border-l-2 border-zinc-800 pl-3">
+                <div className="flex items-center gap-2 flex-wrap mb-0.5">
+                  <span className={`text-[11px] px-1.5 py-0.5 rounded border ${CATEGORY_CLS[it.category] || CATEGORY_CLS.other}`}>{it.category}</span>
+                  <span className="text-xs text-zinc-600">{it.date}</span>
+                  {it.isNew && <span className="text-[11px] font-semibold text-sky-300">NEW</span>}
+                </div>
+                <a href={it.sourceUrl} target="_blank" rel="noopener noreferrer"
+                  className="text-sm font-medium text-white hover:text-sky-300 transition-colors">{it.headline}</a>
+                <p className="text-xs text-zinc-400 leading-relaxed mt-0.5">{it.summary}</p>
+                <p className="text-xs text-zinc-300 leading-relaxed mt-1"><span className="text-sky-400 font-semibold">So what </span>{it.soWhat}</p>
+                <p className="text-xs text-zinc-400 italic leading-relaxed mt-1">&ldquo;{it.howToUse}&rdquo;</p>
+              </li>
+            ))}
+          </ul>
+          {b.items.length > 4 && (
+            <button onClick={() => setShowAll(v => !v)} className="text-xs text-zinc-500 hover:text-zinc-300">
+              {showAll ? 'Show fewer' : `Show all ${b.items.length}`}
+            </button>
+          )}
+
+          {b.talkingPoints.length > 0 && (
+            <div className="pt-3 border-t border-zinc-800">
+              <p className="text-xs font-semibold uppercase tracking-widest text-zinc-500 mb-2">Tie it to your stories</p>
+              <ul className="space-y-1.5">{b.talkingPoints.map((t, i) => <li key={i} className="text-sm text-zinc-300 leading-snug">• {t}</li>)}</ul>
+            </div>
+          )}
+          <div className="grid sm:grid-cols-2 gap-4">
+            {b.questionsFromNews.length > 0 && (
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-widest text-zinc-500 mb-2">Questions only you&apos;d ask</p>
+                <ul className="space-y-1.5">{b.questionsFromNews.map((q, i) => <li key={i} className="text-sm text-zinc-300 leading-snug">&ldquo;{q}&rdquo;</li>)}</ul>
+              </div>
+            )}
+            {b.watchOuts.length > 0 && (
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-widest text-amber-500 mb-2">Handle with care</p>
+                <ul className="space-y-1.5">{b.watchOuts.map((w, i) => <li key={i} className="text-sm text-zinc-400 leading-snug">{w}</li>)}</ul>
+              </div>
+            )}
+          </div>
+          {result!.sources.length > 0 && (
+            <details className="text-xs text-zinc-500">
+              <summary className="cursor-pointer hover:text-zinc-300">{result!.sources.length} pages searched</summary>
+              <ul className="mt-2 space-y-1">
+                {result!.sources.map(src => (
+                  <li key={src.url}><a href={src.url} target="_blank" rel="noopener noreferrer" className="text-sky-400 hover:text-sky-300 break-all">{src.title || src.url}</a></li>
+                ))}
+              </ul>
+            </details>
+          )}
+        </div>
+      )}
+    </Card>
+  )
+}
+
 // ── Interviewers ──────────────────────────────────────────────────────────────
 
-function InterviewerRow({ iv }: { iv: CompanyDetail['interviewers'][number] }) {
+function DossierList({ title, items, cls = 'text-zinc-300' }: { title: string; items: string[]; cls?: string }) {
+  if (!items.length) return null
+  return (
+    <div>
+      <p className="text-[11px] font-semibold uppercase tracking-widest text-zinc-500 mb-1">{title}</p>
+      <ul className="space-y-1">{items.map((t, i) => <li key={i} className={`text-xs leading-relaxed ${cls}`}>• {t}</li>)}</ul>
+    </div>
+  )
+}
+
+function InterviewerRow({ iv, company }: { iv: CompanyDetail['interviewers'][number]; company: string }) {
   const [expanded, setExpanded] = useState(false)
+  const [result, setResult] = useState<InterviewerResult | null>(null)
+  const [open, setOpen] = useState(false)
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState('')
   const long = iv.notes.length > 220
+
+  useEffect(() => {
+    fetch(`/api/interviewer?company=${encodeURIComponent(company)}&name=${encodeURIComponent(iv.name)}`)
+      .then(r => r.json()).then(setResult).catch(() => {})
+  }, [company, iv.name])
+
+  const research = async () => {
+    setLoading(true); setError(''); setOpen(true)
+    try {
+      const res = await fetch('/api/interviewer', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ company, name: iv.name, linkedin: iv.linkedin, notes: iv.notes }),
+      })
+      const data = await res.json()
+      if (!res.ok) { setError(data.error || 'Research failed'); return }
+      setResult(data)
+    } catch { setError('Network error') }
+    finally { setLoading(false) }
+  }
+
+  const d = result?.dossier
+  const confCls = d?.identityConfidence === 'high' ? 'text-emerald-400' : d?.identityConfidence === 'medium' ? 'text-amber-400' : 'text-red-400'
+
   return (
     <div className="flex gap-3">
       <div className="w-8 h-8 rounded-full bg-zinc-800 border border-zinc-700 flex items-center justify-center shrink-0 text-xs font-bold text-zinc-400">
         {iv.name.split(' ').map(n => n[0]).join('').slice(0, 2)}
       </div>
       <div className="min-w-0 flex-1">
-        <div className="flex items-center gap-2 mb-0.5">
-          <span className="text-sm font-medium text-white">{iv.name}</span>
-          {iv.linkedin && (
-            <a href={iv.linkedin} target="_blank" rel="noopener noreferrer" aria-label={`${iv.name} on LinkedIn`}
-              className="text-blue-400 hover:text-blue-300 transition-colors"><IconLinkedIn /></a>
+        <div className="flex items-center justify-between gap-2 mb-0.5">
+          <div className="flex items-center gap-2 min-w-0">
+            <span className="text-sm font-medium text-white truncate">{iv.name}</span>
+            {iv.linkedin && (
+              <a href={iv.linkedin} target="_blank" rel="noopener noreferrer" aria-label={`${iv.name} on LinkedIn`}
+                className="text-blue-400 hover:text-blue-300 transition-colors"><IconLinkedIn /></a>
+            )}
+            {d?.title && <span className="text-xs text-zinc-500 truncate">{d.title}</span>}
+          </div>
+          {d ? (
+            <button onClick={() => setOpen(v => !v)} className="text-xs font-semibold text-violet-400 hover:text-violet-300 shrink-0">
+              {open ? 'Hide deep dive' : 'Deep dive'}
+            </button>
+          ) : (
+            <button onClick={research} disabled={loading}
+              className="flex items-center gap-1.5 text-xs font-semibold text-violet-400 hover:text-violet-300 disabled:opacity-50 shrink-0">
+              {loading ? <><Spinner /> Researching…</> : 'Research'}
+            </button>
           )}
         </div>
-        {iv.notes && (
+
+        {d && !open && <p className="text-xs text-zinc-400 leading-relaxed">{d.summary}</p>}
+        {!d && iv.notes && (
           <>
             <p className={`text-xs text-zinc-400 leading-relaxed ${long && !expanded ? 'line-clamp-3' : ''}`}>{iv.notes}</p>
             {long && (
@@ -226,6 +413,44 @@ function InterviewerRow({ iv }: { iv: CompanyDetail['interviewers'][number] }) {
               </button>
             )}
           </>
+        )}
+        {error && <p className="text-xs text-red-400 mt-1">{error}</p>}
+        {loading && !d && <p className="text-xs text-zinc-500 mt-1">Looking up their background and public work. Takes a minute or two.</p>}
+
+        {d && open && (
+          <div className="mt-2 space-y-3 bg-zinc-950/40 border border-zinc-800 rounded-lg p-3">
+            <p className="text-sm text-zinc-200 leading-relaxed">{d.summary}</p>
+            <p className="text-xs text-zinc-500">
+              <span className={confCls}>{d.identityConfidence} confidence</span> this is the right person. {d.identityBasis}
+            </p>
+            <div className="grid sm:grid-cols-2 gap-3">
+              <DossierList title="Career path" items={d.careerPath} />
+              <DossierList title="Likely focus" items={d.likelyFocus} />
+              <DossierList title="Shared background" items={d.sharedBackground} cls="text-emerald-300" />
+              <DossierList title="Rapport openers" items={d.rapportHooks} />
+              <DossierList title="Ask them" items={d.questionsForThem} cls="text-zinc-200" />
+              <DossierList title="Avoid" items={d.avoid} cls="text-amber-300/90" />
+            </div>
+            {d.publicActivity.length > 0 && (
+              <div>
+                <p className="text-[11px] font-semibold uppercase tracking-widest text-zinc-500 mb-1">Public activity</p>
+                <ul className="space-y-1">
+                  {d.publicActivity.map((a, i) => (
+                    <li key={i} className="text-xs text-zinc-400">
+                      <span className="text-zinc-600">{a.date} </span>
+                      {a.url ? <a href={a.url} target="_blank" rel="noopener noreferrer" className="text-violet-300 hover:text-violet-200">{a.what}</a> : a.what}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+            <div className="flex items-center justify-between text-xs text-zinc-600">
+              <span>Researched {new Date(result!.generatedAt).toLocaleDateString()} · {result!.sources.length} pages searched</span>
+              <button onClick={research} disabled={loading} className="text-violet-400 hover:text-violet-300 disabled:opacity-50">
+                {loading ? 'Researching…' : 'Redo'}
+              </button>
+            </div>
+          </div>
         )}
       </div>
     </div>
@@ -273,6 +498,150 @@ function RoleCard({ detail }: { detail: CompanyDetail }) {
         </div>
       )}
     </section>
+  )
+}
+
+// ── Debrief and thank you notes ───────────────────────────────────────────────
+
+function CopyButton({ text }: { text: string }) {
+  const [copied, setCopied] = useState(false)
+  return (
+    <button onClick={() => { navigator.clipboard.writeText(text); setCopied(true); setTimeout(() => setCopied(false), 1500) }}
+      className="text-xs text-zinc-400 hover:text-white bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 px-2 py-1 rounded-md transition-colors">
+      {copied ? 'Copied' : 'Copy'}
+    </button>
+  )
+}
+
+function DebriefForm({ company, round, onDone, onCancel }: {
+  company: string
+  round: RoundItem
+  onDone: (r: DebriefResult) => void
+  onCancel: () => void
+}) {
+  const [form, setForm] = useState<DebriefInput>({
+    company, round, interviewers: round.who ? round.who.split(/,| and /).map(s => s.trim()).filter(Boolean) : [],
+    feel: 'good', questions: '', signals: '', redo: '', draftNotes: true,
+  })
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState('')
+  const set = (k: 'questions' | 'signals' | 'redo') => (e: React.ChangeEvent<HTMLTextAreaElement>) => setForm({ ...form, [k]: e.target.value })
+
+  const submit = async () => {
+    setSaving(true); setError('')
+    try {
+      const res = await fetch('/api/debrief', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(form),
+      })
+      const data = await res.json()
+      if (!res.ok) { setError(data.error || 'Debrief failed'); return }
+      onDone(data)
+    } catch { setError('Network error') }
+    finally { setSaving(false) }
+  }
+
+  return (
+    <div className="space-y-3">
+      <p className="text-sm text-zinc-300">
+        Nice work getting through <span className="text-white font-medium">{round.name}</span>. Capture it while it&apos;s fresh. Rough notes are fine.
+      </p>
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="text-xs text-zinc-500">How did it feel?</span>
+        {(['great', 'good', 'mixed', 'rough'] as const).map(f => (
+          <button key={f} onClick={() => setForm({ ...form, feel: f })}
+            className={`text-xs px-2.5 py-1 rounded-full border transition-colors ${
+              form.feel === f ? 'bg-blue-500/20 border-blue-500/50 text-blue-200' : 'border-zinc-700 text-zinc-400 hover:text-zinc-200'
+            }`}>{f}</button>
+        ))}
+      </div>
+      <input value={form.interviewers.join(', ')}
+        onChange={e => setForm({ ...form, interviewers: e.target.value.split(',').map(s => s.trim()) })}
+        placeholder="Interviewers, separated by commas" className={`${inputCls} w-full`} />
+      <textarea value={form.questions} onChange={set('questions')} rows={3} placeholder="Questions they asked" className={`${inputCls} w-full resize-none`} />
+      <textarea value={form.signals} onChange={set('signals')} rows={2} placeholder="Signals, like what they leaned into, next steps they mentioned, reactions" className={`${inputCls} w-full resize-none`} />
+      <textarea value={form.redo} onChange={set('redo')} rows={2} placeholder="Anything you'd answer differently" className={`${inputCls} w-full resize-none`} />
+      <label className="flex items-center gap-2 text-xs text-zinc-400">
+        <input type="checkbox" checked={form.draftNotes} onChange={e => setForm({ ...form, draftNotes: e.target.checked })} />
+        Draft thank you notes
+      </label>
+      {error && <p className="text-sm text-red-400">{error}</p>}
+      <div className="flex items-center gap-2">
+        <button onClick={submit} disabled={saving}
+          className="flex items-center gap-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-40 text-white px-4 py-2 rounded-lg text-sm font-semibold">
+          {saving ? <><Spinner /> Debriefing…</> : 'Save debrief'}
+        </button>
+        {!saving && <button onClick={onCancel} className="text-sm text-zinc-500 hover:text-zinc-300 px-2">Skip for now</button>}
+      </div>
+    </div>
+  )
+}
+
+function DebriefView({ d }: { d: DebriefResult }) {
+  return (
+    <div className="space-y-3">
+      <div>
+        <p className="text-xs text-zinc-500 mb-1">
+          {d.input.round.name}{d.input.interviewers.filter(Boolean).length ? ` with ${d.input.interviewers.filter(Boolean).join(', ')}` : ''} · felt {d.input.feel} · {new Date(d.createdAt).toLocaleDateString()}
+        </p>
+        <p className="text-sm text-zinc-200 leading-relaxed">{d.summary}</p>
+      </div>
+      {d.storyNotes.length > 0 && (
+        <ul className="space-y-1">{d.storyNotes.map((n, i) => <li key={i} className="text-xs text-zinc-400 leading-relaxed">• {n}</li>)}</ul>
+      )}
+      {d.thankYouNotes.map((n, i) => (
+        <div key={i} className="bg-zinc-950/40 border border-zinc-800 rounded-lg p-3">
+          <div className="flex items-center justify-between gap-2 mb-2">
+            <p className="text-xs text-zinc-400">To <span className="text-white">{n.to}</span> · <span className="text-zinc-300">{n.subject}</span></p>
+            <div className="flex gap-1.5">
+              <CopyButton text={n.subject} />
+              <CopyButton text={n.body} />
+            </div>
+          </div>
+          <p className="text-sm text-zinc-300 leading-relaxed whitespace-pre-wrap">{n.body}</p>
+        </div>
+      ))}
+    </div>
+  )
+}
+
+function DebriefCard({ company, pending, onClearPending, onSaved }: {
+  company: string
+  pending: RoundItem | null
+  onClearPending: () => void
+  onSaved: () => void
+}) {
+  const [history, setHistory] = useState<DebriefResult[]>([])
+  const [showOlder, setShowOlder] = useState(false)
+
+  useEffect(() => {
+    fetch(`/api/debrief?name=${encodeURIComponent(company)}`).then(r => r.json()).then(setHistory).catch(() => {})
+  }, [company])
+
+  if (!pending && history.length === 0) return null
+  const [latest, ...older] = history
+
+  return (
+    <Card title={pending ? 'Debrief This Round' : 'Debrief and Thank You Notes'} accent="text-blue-400"
+      action={!pending && history.length > 0 && <span className="text-xs text-zinc-600">{history.length} logged</span>}>
+      {pending ? (
+        <DebriefForm company={company} round={pending} onCancel={onClearPending}
+          onDone={r => { setHistory([r, ...history]); onClearPending(); onSaved() }} />
+      ) : (
+        <>
+          <DebriefView d={latest} />
+          {older.length > 0 && (
+            <div className="mt-4 pt-3 border-t border-zinc-800">
+              <button onClick={() => setShowOlder(v => !v)} className="text-xs text-zinc-500 hover:text-zinc-300">
+                {showOlder ? 'Hide earlier rounds' : `Earlier rounds (${older.length})`}
+              </button>
+              {showOlder && <div className="space-y-5 mt-3">{older.map((d, i) => <DebriefView key={i} d={d} />)}</div>}
+            </div>
+          )}
+        </>
+      )}
+    </Card>
   )
 }
 
@@ -330,6 +699,7 @@ export function CompanyDetailPanel({ company, onBack, onProfileRefresh }: {
   const [loadError, setLoadError] = useState('')
   const [saveError, setSaveError] = useState('')
   const [saving, setSaving] = useState(false)
+  const [debriefRound, setDebriefRound] = useState<RoundItem | null>(null)
 
   const load = useCallback(async () => {
     setLoading(true); setLoadError('')
@@ -434,11 +804,16 @@ export function CompanyDetailPanel({ company, onBack, onProfileRefresh }: {
       {/* Body: main column plus a right rail. Both always have a card, so neither side sits empty. */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 items-start">
         <div className="lg:col-span-2 space-y-4 min-w-0">
-          <RoundsCard rounds={detail.roundItems} closed={closed} onSave={rounds => patch({ rounds }, { roundItems: rounds })} />
+          <RoundsCard rounds={detail.roundItems} closed={closed}
+            onSave={rounds => patch({ rounds }, { roundItems: rounds })}
+            onCompleted={setDebriefRound} />
+          <DebriefCard company={company} pending={debriefRound} onClearPending={() => setDebriefRound(null)}
+            onSaved={() => { load(); onProfileRefresh() }} />
+          {!closed && <BriefingCard company={company} />}
           {!closed && <PrepPanel company={company} detail={detail} />}
           {detail.interviewers.length > 0 && (
             <Card title="Interviewers">
-              <div className="space-y-4">{detail.interviewers.map((iv, i) => <InterviewerRow key={i} iv={iv} />)}</div>
+              <div className="space-y-4">{detail.interviewers.map((iv, i) => <InterviewerRow key={i} iv={iv} company={company} />)}</div>
             </Card>
           )}
           <RoleCard detail={detail} />
