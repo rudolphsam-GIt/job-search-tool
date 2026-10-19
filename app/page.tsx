@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback, useRef, type ChangeEvent } from 'react'
 import type { Profile, AnalysisResult, RemoteJob, CompanyDetail, SearchPrefs, ProfileOverrides } from '@/lib/types'
 import { DEFAULT_SEARCH_PREFS } from '@/lib/types'
+import { PrepPanel } from './prep-panel'
 
 // ── Icons ─────────────────────────────────────────────────────────────────────
 
@@ -588,6 +589,9 @@ function CompanyDetailPanel({
           )}
         </div>
       </div>
+
+      {/* Day-of prep */}
+      {!isClosed && <PrepPanel company={company} detail={detail} />}
 
       {/* Update panel */}
       <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-5">

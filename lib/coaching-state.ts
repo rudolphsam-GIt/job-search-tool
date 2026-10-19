@@ -59,3 +59,13 @@ export function parseProfile(content: string): Profile {
     hasCoachingState: true,
   }
 }
+
+// Find the "### <label>" block in coaching_state.md: exact header match first, then substring
+export function extractCompanySection(content: string, label: string): string {
+  const parts = content.split(/(?=^### )/m)
+  const match = parts.find(p => {
+    const header = p.match(/^### (.+)/m)?.[1]?.trim() || ''
+    return header === label || header.toLowerCase().includes(label.toLowerCase())
+  })
+  return match?.trim() || ''
+}

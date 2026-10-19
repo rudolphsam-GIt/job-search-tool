@@ -122,3 +122,40 @@ export interface RemoteJob {
   foundDate?: string
   status?: 'saved' | 'applied' | 'active' | 'archived'
 }
+
+export interface PrepRequest {
+  company: string               // coaching_state.md loop label, e.g. "Workday — Adaptive Planning"
+  role?: string
+  reqId?: string
+  interviewer?: string
+  interviewerLinkedin?: string
+  interviewDate?: string
+  jobDescription?: string       // pasted JD text, if the posting is no longer public
+  notes?: string                // anything else the candidate knows (skill tags, recruiter notes)
+}
+
+export interface CheatSheet {
+  company: string
+  role: string
+  interviewer: string
+  interviewDate: string
+  remember: string
+  positioning: string
+  priorities: string[]
+  stories: { id: string; title: string; hook: string }[]
+  likelyQuestions: { question: string; storyId: string }[]
+  leadConcern: { concern: string; counter: string }
+  otherConcerns: { concern: string; counter: string }[]
+  bestQuestion: string
+  backupQuestions: string[]
+  interviewerRead: string
+  confidence: 'high' | 'medium' | 'low'
+  caveats: string
+}
+
+export interface PrepResult {
+  request: PrepRequest
+  cheatSheet: CheatSheet
+  sources: { title: string; url: string }[]
+  generatedAt: string
+}
