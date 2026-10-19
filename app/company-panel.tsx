@@ -384,12 +384,11 @@ function InterviewerRow({ iv, company }: { iv: CompanyDetail['interviewers'][num
       <div className="min-w-0 flex-1">
         <div className="flex items-center justify-between gap-2 mb-0.5">
           <div className="flex items-center gap-2 min-w-0">
-            <span className="text-sm font-medium text-white truncate">{iv.name}</span>
+            <span className="text-sm font-medium text-white">{iv.name}</span>
             {iv.linkedin && (
               <a href={iv.linkedin} target="_blank" rel="noopener noreferrer" aria-label={`${iv.name} on LinkedIn`}
                 className="text-blue-400 hover:text-blue-300 transition-colors"><IconLinkedIn /></a>
             )}
-            {d?.title && <span className="text-xs text-zinc-500 truncate">{d.title}</span>}
           </div>
           {d ? (
             <button onClick={() => setOpen(v => !v)} className="text-xs font-semibold text-violet-400 hover:text-violet-300 shrink-0">
@@ -403,6 +402,7 @@ function InterviewerRow({ iv, company }: { iv: CompanyDetail['interviewers'][num
           )}
         </div>
 
+        {d?.title && <p className="text-xs text-zinc-500 mb-1">{d.title}</p>}
         {d && !open && <p className="text-xs text-zinc-400 leading-relaxed">{d.summary}</p>}
         {!d && iv.notes && (
           <>
