@@ -82,7 +82,10 @@ export async function POST(req: NextRequest) {
       store.applied = store.applied.filter(s => s.id !== job.id)
       store.active = store.active.filter(s => s.id !== job.id)
       store.archived = store.archived.filter(s => s.id !== job.id)
-      const updated = { ...job, status: newStatus as RemoteJob['status'] }
+      // Jobs can be added straight from Find Jobs or Analyze, so treat this like a save too
+      const updated = { savedAt: today, ...job, status: newStatus as RemoteJob['status'] }
+      store.seen[job.id] = store.seen[job.id] || today
+      store.newJobs = store.newJobs.filter(j => j.id !== job.id)
       if (newStatus === 'saved') store.saved.unshift(updated)
       else if (newStatus === 'applied') store.applied.unshift(updated)
       else if (newStatus === 'active') { store.active.unshift(updated); loopsChanged = ensureLoop(updated) }

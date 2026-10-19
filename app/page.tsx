@@ -97,8 +97,40 @@ function Spinner({ size = 'sm' }: { size?: 'sm' | 'lg' }) {
 
 // ── Job Card ──────────────────────────────────────────────────────────────────
 
-const PIPELINE_STATUS_LABELS: Record<string, string> = {
-  saved: 'Saved', applied: 'Applied', active: 'Active', archived: 'Archived',
+// One set of pipeline buckets, used by every status dropdown in the app
+const STATUS_OPTIONS: { value: NonNullable<RemoteJob['status']>; label: string }[] = [
+  { value: 'saved', label: 'Saved' },
+  { value: 'applied', label: 'Applied' },
+  { value: 'active', label: 'Active (interviewing)' },
+  { value: 'archived', label: 'Closed' },
+]
+
+const STATUS_CLS: Record<string, string> = {
+  active: 'text-emerald-400 border-emerald-500/40 bg-emerald-500/10',
+  applied: 'text-amber-400 border-amber-500/40 bg-amber-500/10',
+  archived: 'text-zinc-500 border-zinc-700 bg-zinc-800/50',
+  saved: 'text-zinc-300 border-zinc-600 bg-zinc-800',
+}
+
+function PipelineSelect({ status, onChange }: {
+  status?: RemoteJob['status']
+  onChange: (status: RemoteJob['status']) => void
+}) {
+  return (
+    <select
+      value={status || ''}
+      onChange={e => e.target.value && onChange(e.target.value as RemoteJob['status'])}
+      aria-label="Pipeline status"
+      className={`text-xs border px-2.5 py-1.5 rounded-lg cursor-pointer focus:outline-none focus:ring-1 focus:ring-blue-500 font-medium ${
+        status ? STATUS_CLS[status] : 'text-zinc-300 border-zinc-700 bg-zinc-800 hover:bg-zinc-700'
+      }`}
+    >
+      {!status && <option value="" disabled>+ Add to pipeline</option>}
+      {STATUS_OPTIONS.map(o => (
+        <option key={o.value} value={o.value} className="bg-zinc-900 text-zinc-300">{o.label}</option>
+      ))}
+    </select>
+  )
 }
 
 function JobCard({
@@ -110,6 +142,7 @@ function JobCard({
   onSkip,
   onUnsave,
   onAnalyze,
+  onSetStatus,
   hideActions,
 }: {
   job: RemoteJob & { foundDate?: string; savedAt?: string }
@@ -120,10 +153,12 @@ function JobCard({
   onSkip?: (job: RemoteJob) => void
   onUnsave?: (job: RemoteJob) => void
   onAnalyze?: (url: string) => void
+  onSetStatus?: (job: RemoteJob, status: RemoteJob['status']) => void
   hideActions?: boolean
 }) {
   const effectiveSaved = isSaved || pipelineStatus === 'saved'
-  const statusLabel = pipelineStatus ? PIPELINE_STATUS_LABELS[pipelineStatus] : (effectiveSaved ? 'Saved' : undefined)
+  const currentStatus = pipelineStatus || (effectiveSaved ? 'saved' : undefined)
+  const statusLabel = onSetStatus ? undefined : STATUS_OPTIONS.find(o => o.value === currentStatus)?.label
 
   const isWatchlist = job.watchlisted || job.flag === 'watchlist_stretch'
 
@@ -186,7 +221,9 @@ function JobCard({
           {/* Actions */}
           {!hideActions && (
             <div className="flex items-center gap-2 flex-wrap">
-              {pipelineStatus && pipelineStatus !== 'saved' ? (
+              {onSetStatus ? (
+                <PipelineSelect status={currentStatus} onChange={s => onSetStatus(job, s)} />
+              ) : pipelineStatus && pipelineStatus !== 'saved' ? (
                 <span className="text-xs text-zinc-500 px-1">Already in your pipeline — manage status on the Pipeline tab</span>
               ) : effectiveSaved ? (
                 <button onClick={() => onUnsave?.(job)}
@@ -210,8 +247,8 @@ function JobCard({
                   Analyze
                 </button>
               )}
-              {!effectiveSaved && !pipelineStatus && (
-                <button onClick={() => onSkip?.(job)}
+              {!currentStatus && onSkip && (
+                <button onClick={() => onSkip(job)}
                   className="flex items-center gap-1.5 text-xs text-zinc-500 hover:text-zinc-300 hover:bg-zinc-800 border border-transparent hover:border-zinc-700 px-3 py-1.5 rounded-lg transition-colors">
                   <IconX />
                   Not interested
@@ -675,8 +712,8 @@ function CompanyDetailPanel({
 
 // ── Analyze Tab ───────────────────────────────────────────────────────────────
 
-function AnalyzeTab({ savedIds, initialUrl, onStoreChange }: {
-  savedIds: Set<number>
+function AnalyzeTab({ addedStatus, initialUrl, onStoreChange }: {
+  addedStatus: Map<number, RemoteJob['status']>
   initialUrl?: string
   onStoreChange: (store: StoreUpdate) => void
 }) {
@@ -686,8 +723,7 @@ function AnalyzeTab({ savedIds, initialUrl, onStoreChange }: {
   const [result, setResult] = useState<AnalysisResult | null>(null)
   const [error, setError] = useState('')
   const [showDesc, setShowDesc] = useState(false)
-  const [savedId, setSavedId] = useState<number | null>(null)
-  const [markedApplied, setMarkedApplied] = useState(false)
+  const [localStatus, setLocalStatus] = useState<RemoteJob['status']>(undefined)
   const urlInputRef = useRef<HTMLInputElement>(null)
 
   // Sync if parent passes a new URL (cross-tab shortcut)
@@ -695,13 +731,12 @@ function AnalyzeTab({ savedIds, initialUrl, onStoreChange }: {
     if (initialUrl) {
       setUrl(initialUrl)
       setResult(null)
-      setSavedId(null)
-      setMarkedApplied(false)
+      setLocalStatus(undefined)
     }
   }, [initialUrl])
 
   const resultJobId = result ? Math.abs((url + result.company + result.role).split('').reduce((a, c) => (a << 5) - a + c.charCodeAt(0), 0)) % 6999999 + 1000000 : null
-  const isSaved = resultJobId !== null && (savedIds.has(resultJobId) || savedId === resultJobId)
+  const pipelineStatus = localStatus ?? (resultJobId !== null ? addedStatus.get(resultJobId) : undefined)
 
   const buildJob = (): RemoteJob | null => {
     if (!result || !resultJobId) return null
@@ -725,43 +760,21 @@ function AnalyzeTab({ savedIds, initialUrl, onStoreChange }: {
     }
   }
 
-  const saveResult = async () => {
+  const setPipelineStatus = async (newStatus: RemoteJob['status']) => {
     const job = buildJob()
-    if (!job || !resultJobId) return
+    if (!job) return
     const res = await fetch('/api/jobs-store', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ action: 'save', job }),
+      body: JSON.stringify({ action: 'setStatus', job, newStatus }),
     })
-    const store = await res.json()
-    onStoreChange(store)
-    setSavedId(resultJobId)
-    setMarkedApplied(false)
-  }
-
-  const markApplied = async () => {
-    const job = buildJob()
-    if (!job || !resultJobId) return
-    // Ensure saved first, then set status to applied
-    await fetch('/api/jobs-store', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ action: 'save', job }),
-    })
-    const res = await fetch('/api/jobs-store', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ action: 'setStatus', job: { ...job, status: 'saved' }, newStatus: 'applied' }),
-    })
-    const store = await res.json()
-    onStoreChange(store)
-    setSavedId(resultJobId)
-    setMarkedApplied(true)
+    onStoreChange(await res.json())
+    setLocalStatus(newStatus)
   }
 
   const analyze = async () => {
     if (!url && !description) { setError('Enter a job URL or paste the description'); return }
-    setLoading(true); setError(''); setResult(null); setSavedId(null); setMarkedApplied(false)
+    setLoading(true); setError(''); setResult(null); setLocalStatus(undefined)
     try {
       const res = await fetch('/api/analyze', {
         method: 'POST',
@@ -856,24 +869,7 @@ function AnalyzeTab({ savedIds, initialUrl, onStoreChange }: {
                       Apply <IconExternal />
                     </a>
                   )}
-                  {markedApplied ? (
-                    <span className="flex items-center gap-1.5 text-xs text-amber-400 font-semibold">
-                      <span>✓</span> Marked as Applied
-                    </span>
-                  ) : isSaved ? (
-                    <button onClick={markApplied}
-                      className="flex items-center gap-1.5 text-xs bg-amber-500/15 hover:bg-amber-500/25 border border-amber-500/30 text-amber-300 hover:text-amber-200 px-3 py-1.5 rounded-lg font-medium transition-colors">
-                      Mark Applied
-                    </button>
-                  ) : (
-                    <button onClick={saveResult}
-                      className="flex items-center gap-1.5 text-xs bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 text-zinc-300 hover:text-white px-3 py-1.5 rounded-lg font-medium transition-colors">
-                      <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 5a2 2 0 012-2h10a2 2 0 012 2v16l-7-3.5L5 21V5z" />
-                      </svg>
-                      Save to list
-                    </button>
-                  )}
+                  <PipelineSelect status={pipelineStatus} onChange={setPipelineStatus} />
                 </div>
               </div>
               <ScoreRing score={result.fitScore} />
@@ -1094,6 +1090,11 @@ function WatchlistTab({
             onSave={j => handleAction('save', j)}
             onSkip={j => handleAction('skip', j)}
             onAnalyze={onAnalyze}
+            onSetStatus={(j, newStatus) => fetch('/api/jobs-store', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ action: 'setStatus', job: j, newStatus }),
+            }).then(r => r.json()).then(onStoreChange)}
           />
         )
       })}
@@ -1131,7 +1132,7 @@ function SearchTab({
   const [showDailyAdded, setShowDailyAdded] = useState(false)
   const [showSearchAdded, setShowSearchAdded] = useState(false)
 
-  const { save, skip, unsave } = useJobActions(store => {
+  const { save, skip, unsave, setStatus } = useJobActions(store => {
     setDailyJobs(store.newJobs)
     onStoreChange(store)
   })
@@ -1240,6 +1241,7 @@ function SearchTab({
               onSkip={skip}
               onUnsave={unsave}
               onAnalyze={onAnalyze}
+              onSetStatus={setStatus}
             />
           ))}
         </div>
@@ -1264,6 +1266,7 @@ function SearchTab({
                   onSave={save}
                   onUnsave={unsave}
                   onAnalyze={onAnalyze}
+                  onSetStatus={setStatus}
                 />
               ))}
             </div>
@@ -1326,6 +1329,7 @@ function SearchTab({
                     onSkip={skip}
                     onUnsave={unsave}
                     onAnalyze={onAnalyze}
+                    onSetStatus={setStatus}
                   />
                 ))}
               </div>
@@ -1351,6 +1355,7 @@ function SearchTab({
                       onSave={save}
                       onUnsave={unsave}
                       onAnalyze={onAnalyze}
+                      onSetStatus={setStatus}
                     />
                   ))}
                 </div>
@@ -1372,12 +1377,6 @@ function SearchTab({
 
 // ── Pipeline Job Card ─────────────────────────────────────────────────────────
 
-const STATUS_OPTIONS: { value: RemoteJob['status']; label: string }[] = [
-  { value: 'saved', label: 'Saved' },
-  { value: 'applied', label: 'Applied — Pending' },
-  { value: 'active', label: 'Interviewing' },
-  { value: 'archived', label: 'Archived' },
-]
 
 function PipelineCard({
   job,
@@ -1391,10 +1390,6 @@ function PipelineCard({
   onOpen?: () => void
 }) {
   const [expandFit, setExpandFit] = useState(false)
-  const statusColor = currentStatus === 'active' ? 'text-emerald-400 border-emerald-500/40 bg-emerald-500/10'
-    : currentStatus === 'applied' ? 'text-amber-400 border-amber-500/40 bg-amber-500/10'
-    : currentStatus === 'archived' ? 'text-zinc-500 border-zinc-700 bg-zinc-800/50'
-    : 'text-zinc-300 border-zinc-700 bg-zinc-800'
 
   const dateLabel = (job as RemoteJob & { savedAt?: string }).savedAt
     ? `Saved ${(job as RemoteJob & { savedAt?: string }).savedAt}`
@@ -1441,16 +1436,7 @@ function PipelineCard({
             </div>
           )}
 
-          {/* Status dropdown */}
-          <select
-            value={currentStatus}
-            onChange={e => onSetStatus(job, e.target.value as RemoteJob['status'])}
-            className={`text-xs border px-2.5 py-1.5 rounded-lg cursor-pointer focus:outline-none focus:ring-1 focus:ring-blue-500 font-medium ${statusColor}`}
-          >
-            {STATUS_OPTIONS.map(o => (
-              <option key={o.value} value={o.value} className="bg-zinc-900 text-zinc-300">{o.label}</option>
-            ))}
-          </select>
+          <PipelineSelect status={currentStatus} onChange={s => onSetStatus(job, s)} />
           {onOpen && (
             <button onClick={onOpen}
               className="ml-2 text-xs font-semibold text-blue-400 hover:text-blue-300 border border-blue-500/30 hover:border-blue-500/50 px-2.5 py-1.5 rounded-lg transition-colors">
@@ -2368,7 +2354,7 @@ export default function Home() {
             <CompanyDetailPanel company={selectedCompany} onBack={() => setSelectedCompany(null)} onProfileRefresh={reloadAll} />
           ) : (
             <div className="flex-1 min-w-0">
-              {tab === 'analyze' && <AnalyzeTab savedIds={savedIds} initialUrl={analyzeUrl} onStoreChange={handleStoreChange} />}
+              {tab === 'analyze' && <AnalyzeTab addedStatus={addedStatus} initialUrl={analyzeUrl} onStoreChange={handleStoreChange} />}
               {tab === 'watchlist' && (
                 <WatchlistTab
                   watchlistCompanies={watchlistCompanies}
