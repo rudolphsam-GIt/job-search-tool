@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback, useRef, type ChangeEvent } from 'reac
 import type { Profile, AnalysisResult, RemoteJob, CompanyDetail, SearchPrefs, ProfileOverrides } from '@/lib/types'
 import { DEFAULT_SEARCH_PREFS } from '@/lib/types'
 import { PrepPanel } from './prep-panel'
+import { STAGES, stageInfo, isClosedStage } from '@/lib/status'
 
 // ── Icons ─────────────────────────────────────────────────────────────────────
 
@@ -280,13 +281,30 @@ function RecBadge({ rec }: { rec: string }) {
   )
 }
 
-function StatusBadge({ status }: { status: string }) {
-  const s = status.toLowerCase()
-  const cls = s.includes('final') ? 'bg-violet-500/20 text-violet-300 border-violet-500/30'
-    : s.includes('closed') ? 'bg-zinc-700/50 text-zinc-500 border-zinc-700'
-    : s.includes('offer') ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30'
-    : 'bg-blue-500/15 text-blue-300 border-blue-500/30'
-  return <span className={`text-xs px-2 py-0.5 rounded-full font-medium border ${cls}`}>{status}</span>
+function StatusBadge({ stage }: { stage: string }) {
+  return <span className={`text-xs px-2 py-0.5 rounded-full font-medium border whitespace-nowrap ${stageInfo(stage).cls}`}>{stage}</span>
+}
+
+function StatusSelect({ stage, saving, onChange }: { stage: string; saving: boolean; onChange: (s: string) => void }) {
+  return (
+    <div className="relative inline-flex items-center">
+      <select
+        value={stage}
+        disabled={saving}
+        onChange={e => onChange(e.target.value)}
+        aria-label="Application status"
+        className={`appearance-none cursor-pointer text-xs font-medium border rounded-full pl-2.5 pr-7 py-1 focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50 ${stageInfo(stage).cls}`}
+      >
+        <optgroup label="Active">
+          {STAGES.filter(s => !s.closed).map(s => <option key={s.stage} value={s.stage}>{s.stage}</option>)}
+        </optgroup>
+        <optgroup label="Closed">
+          {STAGES.filter(s => s.closed).map(s => <option key={s.stage} value={s.stage}>{s.stage}</option>)}
+        </optgroup>
+      </select>
+      <span className="pointer-events-none absolute right-2 text-current opacity-70"><IconChevronDown /></span>
+    </div>
+  )
 }
 
 function SeverityDot({ severity }: { severity?: string }) {
@@ -361,6 +379,7 @@ function CompanyDetailPanel({
   const [updating, setUpdating] = useState(false)
   const [updateSuccess, setUpdateSuccess] = useState(false)
   const [expandedJD, setExpandedJD] = useState(false)
+  const [savingStage, setSavingStage] = useState(false)
 
   const load = useCallback(async () => {
     setLoading(true); setError('')
@@ -395,6 +414,22 @@ function CompanyDetailPanel({
     finally { setUpdating(false) }
   }
 
+  const changeStage = async (stage: string) => {
+    setSavingStage(true); setError('')
+    try {
+      const res = await fetch(`/api/company?name=${encodeURIComponent(company)}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ stage }),
+      })
+      const data = await res.json()
+      if (!res.ok) { setError(data.error || 'Status update failed'); return }
+      setDetail(data)
+      onProfileRefresh()
+    } catch { setError('Network error during status update') }
+    finally { setSavingStage(false) }
+  }
+
   if (loading) return (
     <div className="flex-1 flex items-center justify-center">
       <div className="flex flex-col items-center gap-3">
@@ -413,10 +448,9 @@ function CompanyDetailPanel({
     </div>
   )
 
-  const statusLower = detail.status.toLowerCase()
-  const isClosed = statusLower.includes('closed')
-  const hasOffer = statusLower.includes('offer')
-  const isRejected = statusLower.includes('rejected') || statusLower.includes('no longer')
+  const isClosed = isClosedStage(detail.stage)
+  const hasOffer = detail.stage === 'Offer' || detail.stage === 'Accepted'
+  const isRejected = detail.stage === 'Rejected'
 
   return (
     <div className="flex-1 min-w-0 space-y-4">
@@ -426,7 +460,16 @@ function CompanyDetailPanel({
           <div>
             <h2 className="text-xl font-bold text-white mb-0.5">{detail.company}</h2>
             {detail.role && <p className="text-zinc-400 text-sm mb-3">{detail.role}</p>}
-            <StatusBadge status={detail.status.split('—')[0].trim()} />
+            <div className="flex items-center gap-2 flex-wrap">
+              <StatusSelect stage={detail.stage} saving={savingStage} onChange={changeStage} />
+              {savingStage && <Spinner />}
+              {detail.statusUpdated && !savingStage && (
+                <span className="text-xs text-zinc-600">updated {detail.statusUpdated}</span>
+              )}
+            </div>
+            {detail.statusNote && (
+              <p className="text-xs text-zinc-500 mt-2 max-w-xl leading-relaxed">{detail.statusNote}</p>
+            )}
           </div>
           {detail.fitAssessment && (
             <div className="text-right shrink-0">
@@ -2062,8 +2105,10 @@ function Sidebar({
   selectedCompany: string | null
   onSelectCompany: (c: string | null) => void
 }) {
-  const activeInterviews = profile.activeInterviews.filter(i => !i.status.toLowerCase().includes('closed'))
-  const closedInterviews = profile.activeInterviews.filter(i => i.status.toLowerCase().includes('closed'))
+  // Sort active loops by how far along they are, furthest first
+  const order = (stage: string) => STAGES.findIndex(s => s.stage === stage)
+  const activeInterviews = profile.activeInterviews.filter(i => !isClosedStage(i.stage)).sort((a, b) => order(b.stage) - order(a.stage))
+  const closedInterviews = profile.activeInterviews.filter(i => isClosedStage(i.stage))
   const [showClosed, setShowClosed] = useState(false)
 
   return (
@@ -2109,7 +2154,7 @@ function Sidebar({
                   <span className={`text-sm font-medium truncate ${selectedCompany === i.fullLabel ? 'text-blue-200' : 'text-white group-hover:text-blue-200'} transition-colors`}>
                     {i.company}
                   </span>
-                  <StatusBadge status={i.status.split('—')[0].trim()} />
+                  <StatusBadge stage={i.stage} />
                 </div>
                 {i.nextRound && (
                   <p className="text-xs text-zinc-500 truncate">{i.nextRound}</p>
@@ -2166,7 +2211,7 @@ function Sidebar({
                 >
                   <div className="flex items-center justify-between gap-2">
                     <span className="text-sm text-zinc-500 truncate">{i.company}</span>
-                    <StatusBadge status="Closed" />
+                    <StatusBadge stage={i.stage} />
                   </div>
                 </button>
               ))}

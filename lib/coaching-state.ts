@@ -1,6 +1,7 @@
 import fs from 'fs'
 import path from 'path'
 import type { Profile, ActiveInterview } from './types'
+import { normalizeStatus } from './status'
 
 export function loadCoachingStateRaw(): string {
   const stateFilePath = process.env.COACHING_STATE_PATH ||
@@ -40,6 +41,7 @@ export function parseProfile(content: string): Profile {
       company: loopMatch[1].split(' — ')[0].trim(),
       fullLabel: loopMatch[1].trim(),
       status: loopMatch[2].trim(),
+      stage: normalizeStatus(loopMatch[2]).stage,
       nextRound: nextRoundMatch?.[1]?.trim(),
     })
   }
