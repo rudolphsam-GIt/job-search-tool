@@ -132,13 +132,26 @@ function setScalarField(section: string, field: string, value: string): string {
   return re.test(section) ? section.replace(re, `- ${field}: ${value}`) : `${section.trimEnd()}\n- ${field}: ${value}`
 }
 
+// "Name | date | who". Tolerates empty or trailing fields and "/" left over from older saves.
+function parseRoundLine(text: string, done: boolean): RoundItem {
+  const tidy = (v = '') => v.replace(/^[\s/]+|[\s/]+$/g, '')
+  const [name, date, who] = text.split(/\s*\|\s*/)
+  return { name: tidy(name), date: tidy(date), who: tidy(who), done }
+}
+
+// Checklist rounds filed under "Rounds completed" (the coach and the update box sometimes put them there)
+function completedChecklist(section: string) {
+  return (parseChecklist(section, 'Rounds completed') || []).filter(r => r.text)
+}
+
 function parseRoundItems(section: string): RoundItem[] {
   const stored = parseChecklist(section, 'Rounds')
   if (stored) {
-    return stored.map(({ text, done }) => {
-      const [name = '', date = '', who = ''] = text.split(' | ').map(s => s.trim())
-      return { name, date, who, done }
-    })
+    const inTracker = new Set(stored.map(r => parseRoundLine(r.text, r.done).name.toLowerCase()))
+    const extra = completedChecklist(section)
+      .map(r => parseRoundLine(r.text, true))
+      .filter(r => !inTracker.has(r.name.toLowerCase()))
+    return [...extra, ...stored.map(r => parseRoundLine(r.text, r.done))]
   }
   // Older loops only have free text "Round formats", so show those until the first edit
   return parseRounds(section).map(r => ({
@@ -247,8 +260,9 @@ The candidate just provided this update:
 Rewrite this company section incorporating the new information. Rules:
 - Keep the exact same markdown structure and field names
 - Update Status if a round outcome was shared (e.g. "passed" → mark round as completed, advance status)
-- Add the new round to "Rounds completed" if applicable
-- Update "Next round" if new scheduling info was given
+- Rounds live in a "- Rounds:" checklist, one line per round in the form "  - [x] Round name | date | interviewer" ([x] done, [ ] not yet). Mark finished rounds [x] and add newly scheduled rounds as [ ]. Leave a field empty rather than writing TBD, and never add rounds to "Rounds completed"
+- Next steps live in a "- Next steps:" checklist in the form "  - [ ] step". Add any new follow ups the update implies
+- Set "Next round" to the first unfinished round as "date · name · with interviewer", or "None scheduled"
 - If an offer or rejection was mentioned, update Status accordingly
 - Preserve all existing data not contradicted by the update
 - Today's date is ${new Date().toISOString().slice(0, 10)}
@@ -301,6 +315,16 @@ export async function PATCH(req: NextRequest) {
     const clean = (t: string) => t.replace(/\|/g, '/').replace(/\n/g, ' ').trim()
     updated = setListField(updated, 'Rounds', body.rounds.map(r =>
       `[${r.done ? 'x' : ' '}] ${[clean(r.name), clean(r.date), clean(r.who)].join(' | ')}`))
+    // Rounds shown from "Rounds completed" now live in the tracker, so drop those checklist copies
+    if (completedChecklist(updated).length) {
+      const lines = updated.split('\n')
+      const at = lines.findIndex(l => l.startsWith('- Rounds completed:'))
+      let end = at + 1
+      while (end < lines.length && /^\s+-/.test(lines[end])) end++
+      const kept = lines.slice(at + 1, end).filter(l => !/^\s+- \[[ xX]\]/.test(l))
+      lines.splice(at, end - at, ...(kept.length ? [lines[at], ...kept] : []))
+      updated = lines.join('\n')
+    }
     // Keep "Next round" (read by the sidebar and the interview coach) pointing at the first open round
     const next = body.rounds.find(r => !r.done)
     updated = setScalarField(updated, 'Next round', next ? describeRound(next) : 'None scheduled')
