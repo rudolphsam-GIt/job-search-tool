@@ -38,6 +38,12 @@ pipeline and runs an automated daily search.
 - **Analyze any posting** — paste a job URL (or description) for an on-demand fit
   breakdown, recommended stories to deploy, and an apply/skip/monitor call.
 - **Company research** — recent news, interview process, and company signals.
+- **Day of interview cheat sheet** — on any active company page, enter the
+  role, requisition ID and interviewer. Claude (`claude-opus-5-5`) researches
+  the posting and interviewer with web search, then builds a one page cheat
+  sheet from your coaching file: positioning line, top three stories with
+  numbers, likely questions mapped to story IDs, the concern to name first,
+  and the best question to ask. Saved locally and printable to PDF.
 - **Pipeline tracking** — saved → applied → active → archived.
 - **Daily automation** — a `launchd` job runs the search every morning so new
   matches are waiting for you.

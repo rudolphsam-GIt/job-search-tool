@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import Anthropic from '@anthropic-ai/sdk'
 import fs from 'fs'
 import path from 'path'
-import { loadCoachingStateRaw } from '@/lib/coaching-state'
+import { loadCoachingStateRaw, extractCompanySection } from '@/lib/coaching-state'
 import type { CompanyDetail, InterviewRound, InterviewerIntel, Concern } from '@/lib/types'
 
 
@@ -11,17 +11,6 @@ function getStatePath() {
     process.env.COACHING_STATE_PATH ||
     path.join(process.cwd(), '..', 'interview-coach-skill-main', 'coaching_state.md')
   )
-}
-
-function extractCompanySection(content: string, label: string): string {
-  // Split on ### headers and find the block matching the full label exactly
-  const parts = content.split(/(?=^### )/m)
-  const match = parts.find(p => {
-    const header = p.match(/^### (.+)/m)?.[1]?.trim() || ''
-    // Exact match first, then fallback to includes
-    return header === label || header.toLowerCase().includes(label.toLowerCase())
-  })
-  return match?.trim() || ''
 }
 
 function parseRounds(section: string): InterviewRound[] {
