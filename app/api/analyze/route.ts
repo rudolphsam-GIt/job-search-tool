@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import Anthropic from '@anthropic-ai/sdk'
+import { errorResponse } from '@/lib/research'
 import { loadCoachingStateRaw } from '@/lib/coaching-state'
 import { fetchNews } from '@/lib/news'
 
@@ -27,7 +28,7 @@ async function fetchJobContent(url: string): Promise<string> {
 }
 
 
-export async function POST(req: NextRequest) {
+async function handlePost(req: NextRequest) {
   const { url, description } = await req.json()
 
   let jobContent = description || ''
@@ -92,4 +93,14 @@ Return ONLY a JSON object with this exact structure (no markdown, no explanation
   const news = analysis.company ? await fetchNews(analysis.company) : []
 
   return NextResponse.json({ ...analysis, news })
+}
+
+// Return Claude API failures (like a low credit balance) as readable JSON instead of a crash
+export async function POST(req: NextRequest) {
+  try {
+    return await handlePost(req)
+  } catch (err) {
+    const { error, status } = errorResponse(err)
+    return NextResponse.json({ error }, { status })
+  }
 }

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import Anthropic from '@anthropic-ai/sdk'
+import { errorResponse } from '@/lib/research'
 import fs from 'fs'
 import path from 'path'
 import { loadCoachingStateRaw } from '@/lib/coaching-state'
@@ -51,7 +52,7 @@ function applyPrefilters(jobs: RemoteJob[], prefs: SearchPrefs): RemoteJob[] {
   })
 }
 
-export async function POST(req: NextRequest) {
+async function handlePost(req: NextRequest) {
   const { query } = await req.json()
   const coachingState = loadCoachingStateRaw()
   const { prefs, overrides: ov } = readStore()
@@ -177,4 +178,14 @@ flag values: "strong_match" (8-10), "good_match" (6-7), "stretch" (4-5), "watchl
     }))
 
   return NextResponse.json({ jobs: rankedJobs, query: searchQuery })
+}
+
+// Return Claude API failures (like a low credit balance) as readable JSON instead of a crash
+export async function POST(req: NextRequest) {
+  try {
+    return await handlePost(req)
+  } catch (err) {
+    const { error, status } = errorResponse(err)
+    return NextResponse.json({ error }, { status })
+  }
 }

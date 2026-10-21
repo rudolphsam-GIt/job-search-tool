@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import Anthropic from '@anthropic-ai/sdk'
+import { errorResponse } from '@/lib/research'
 import fs from 'fs'
 import path from 'path'
 import { loadCoachingStateRaw } from '@/lib/coaching-state'
@@ -101,7 +102,7 @@ function extractKeywords(coachingState: string): string[] {
 }
 
 
-export async function POST(req: NextRequest) {
+async function handlePost(req: NextRequest) {
   const { force } = await req.json().catch(() => ({ force: false }))
   const today = new Date().toISOString().slice(0, 10)
   const store = readStore()
@@ -272,4 +273,14 @@ flag values: "strong_match" (8-10), "good_match" (6-7), "stretch" (4-5), "watchl
   writeStore(store)
 
   return NextResponse.json({ newJobs, alreadyRan: false, keywordsUsed: keywords, total: candidates.length, relevant: relevant.length })
+}
+
+// Return Claude API failures (like a low credit balance) as readable JSON instead of a crash
+export async function POST(req: NextRequest) {
+  try {
+    return await handlePost(req)
+  } catch (err) {
+    const { error, status } = errorResponse(err)
+    return NextResponse.json({ error }, { status })
+  }
 }

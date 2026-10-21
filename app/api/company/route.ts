@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import Anthropic from '@anthropic-ai/sdk'
+import { errorResponse } from '@/lib/research'
 import fs from 'fs'
 import path from 'path'
 import { loadCoachingStateRaw, extractCompanySection, getStatePath } from '@/lib/coaching-state'
@@ -231,7 +232,7 @@ export async function GET(req: NextRequest) {
 }
 
 // POST — natural language update, Claude rewrites the section, saves to file
-export async function POST(req: NextRequest) {
+async function handlePost(req: NextRequest) {
   const { searchParams } = new URL(req.url)
   const company = searchParams.get('name')
   if (!company) return NextResponse.json({ error: 'Missing company name' }, { status: 400 })
@@ -338,4 +339,14 @@ export async function PATCH(req: NextRequest) {
   fs.writeFileSync(getStatePath(), content.replace(section, updated), 'utf-8')
   if (body.stage) syncPipelineToStage(company.split(' — ')[0], body.stage)
   return NextResponse.json(parseCompanyDetail(updated, company))
+}
+
+// Return Claude API failures (like a low credit balance) as readable JSON instead of a crash
+export async function POST(req: NextRequest) {
+  try {
+    return await handlePost(req)
+  } catch (err) {
+    const { error, status } = errorResponse(err)
+    return NextResponse.json({ error }, { status })
+  }
 }
